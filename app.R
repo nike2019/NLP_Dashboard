@@ -133,12 +133,13 @@ ui <- dashboardPage(
   {
     
     rt <- rs_r()
-    setwd("C:/work/CAS-BD6/Projektarbeit/R-code")
-    #tbl_drug <- drug_r() #fread(file = "daten/Vocabularies/ADR Database/drugnames.csv",sep=",", header=TRUE, )
-    tbl_drug <- fread(file = "daten/Vocabularies/ADR Database/drugnames.csv",sep=",", header=TRUE)
+    setwd("C:/work/CAS-BD6/Projektarbeit/R-code/")
+    #tbl_drug <- drug_r() #fread(file = "Actual Datafiles/drugnames.csv",sep=",", header=TRUE, )
+    tbl_drug <- fread(file = "Actual Datafiles/drugnames.csv",sep=",", header=TRUE)
     
-    setwd("C:/work/CAS-BD6/Projektarbeit/R-code")
-    tbl_synonymes <- fread(file = "daten/Vocabularies/adrs.csv",sep=",", header=FALSE)
+    
+    tbl_synonymes <- fread(file = "Actual Datafiles/adrs.csv",sep=",", header=TRUE)
+    tbl_slangterms <- fread(file = "Actual Datafiles/twitter_slang_terms.csv",sep=",", header=TRUE)
   
     ############################
     # enrich symptom list
@@ -181,7 +182,7 @@ ui <- dashboardPage(
     noadvertise <- rt %>% dplyr::select(isAdvertise,text) %>% dplyr::filter(isAdvertise == FALSE)
   
   
-    outcome <- TagDrugAndSynonymes(noadvertise$text,tbl_synonymes$unique_terms,tbl_drug$drugname[1:1000])
+    outcome <- TagDrugAndSynonymes(noadvertise$text,tbl_synonymes,tbl_drug[1:100],tbl_slangterms)
     #outcome$advertising_ratio <- s
   
     

@@ -19,12 +19,12 @@ resolveKeyWords <- function(keywords,tokens)
 
 
 
-TagDrugAndSynonymes <- function(text, adrs, drugnames)
+TagDrugAndSynonymes <- function(text, adrs, drugnames, slangterms)
 {
   
   
   spacy_initialize()
-  result = NULL;
+  result = NULL
   corp <- quanteda::corpus(text)
   
   
@@ -34,10 +34,10 @@ TagDrugAndSynonymes <- function(text, adrs, drugnames)
   
   dt <- data.table(doc_id = docnames(corp), text = texts(corp))
   
-  drug_table <- data.table(drugname = c(sapply(tbl_drug$drugname[1:1000],function(x) tolower(x))))
-  synonyme_table <- data.table(synonyme = c(sapply(tbl_synonymes$synonyme,function(x) tolower(x))))
-  slang_table <- data.table(slang_terms = c(sapply(tbl_slang_terms$slang.V1,function(x) tolower(x))),
-                            resolved_slang = c(sapply(tbl_slang_terms$exp.V1,function(x) tolower(x))))
+  drug_table <- data.table(drugname = c(sapply(drugnames$drugname,function(x) tolower(x))))
+  synonyme_table <- data.table(synonyme = c(sapply(adrs$synonyme,function(x) tolower(x))))
+  slang_table <- data.table(slang_terms = c(sapply(slangterms$slang.V1,function(x) tolower(x))),
+                            resolved_slang = c(sapply(slangterms$exp.V1,function(x) tolower(x))))
   
   t1 <- spacy_parse(dt$text, pos = TRUE, dependency = TRUE) %>%
     dplyr::select(token,doc_id,pos) %>%
@@ -46,7 +46,7 @@ TagDrugAndSynonymes <- function(text, adrs, drugnames)
   
   
   
-  # variante 1 mit keyword in context (kwic)
+  # variante mit keyword in context (kwic)
   #t1$token <- data.table(token = sapply(t1$token,function(x){ tolower(x)}))
   #t1$token <- unlist(t1$token)
   #corp1 <- quanteda::corpus(t1, docid_field = "doc_id", text_field = "token")
@@ -62,43 +62,19 @@ TagDrugAndSynonymes <- function(text, adrs, drugnames)
   # maskieren aller medikamente
   t1$drugName[which( is.na(v) )] <- ""
   
-  #master_data <- t1 %>% dplyr::select(drugName,text,doc_id)
-  #master_data <- master_data %>% dplyr::filter(is.na(drugName) == FALSE)
   
-  
-  
-  
-  # variante 1 mit amatch (lookup)
   v <- stringdist::amatch(t1$token,synonyme_table$synonyme,maxDist = 1)
   # extrahieren der indexe welche einen konkreten wert beinhalten
   t1$synonyme <- v 
   t1$synonyme[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
   t1$synonyme[which( is.na(v) )] <- ""
   
-  
-  #resolveKeyWords <- function(keywords,tokens)
-  #{
-  
-  #v <- stringdist::amatch(tokens,keywords,maxDist = 1)
+  v <- stringdist::amatch(t1$token,slang_table$slang_terms,maxDist = 1)
   # extrahieren der indexe welche einen konkreten wert beinhalten
-  #res <- v 
-  #res[which( !is.na(v) )] <- tokens[which( !is.na(v) )]
-  #res[which( is.na(v) )] <- ""
+  t1$slang <- v 
+  t1$slang[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
+  t1$slang[which( is.na(v) )] <- ""
   
-  #return(res)
-  
-  
-  #}
-  
-  
-  
-  #kw_symptoms <- resolveKeyWords(synonyme_table$synonyme,t1$token) 
-  #kw_drugs <- resolveKeyWords(drug_table$drugName,t1$token) 
-  #kw_slangterms <- resolveKeyWords(slang_table$slang_terms,t1$token)
-  
-  #t1$synonyme <- kw_symptoms
-  #t1$drugName <- kw_drugs
-  #t1$slang_terms <- kw_slangterms
   
   master_data <- t1 %>% dplyr::select(synonyme,drugName,text,doc_id)
   #master_data <- master_data %>% dplyr::filter(is.na(drugName) == FALSE && is.na(synonyme) == FALSE)
