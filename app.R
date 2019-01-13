@@ -12,6 +12,7 @@
 library(rtweet)
 library(data.table)
 library(shinydashboard)
+library(shiny)
 library(DT)
 library(cleanNLP)
 library(tm)
@@ -80,7 +81,7 @@ ui <- dashboardPage(
                tabPanel(
                  "Messages",
                  
-                   box( title = "Case Analyses Details", status = "primary", height = 
+                   box( title = "messages and found drugs / symptomes", status = "primary", height = 
                           "750",width = "600",solidHeader = T, 
                         column(width = 12,
                                DT::dataTableOutput("trace_table"),style = "height:630px; overflow-y: scroll;"
@@ -94,7 +95,7 @@ ui <- dashboardPage(
                              
                         
                ),
-               tabPanel("LDA",
+               tabPanel("Drug / symptom frequency",
                DT::dataTableOutput("aggr_table"),style = "height:630px; overflow-y: scroll;")
       
       )))
@@ -227,9 +228,14 @@ ui <- dashboardPage(
     
     
     output$aggr_table <- renderDataTable({
-      return(datatable(aggr_data_r()) %>% formatStyle(
-        'synonymes',
-        backgroundColor = styleInterval(3.4, c('gray', 'yellow')))
+      return(datatable(aggr_data_r()) %>% 
+               formatStyle(
+                 'count',
+                 background = styleColorBar(aggr_data_r()$count, 'orange'),
+                 backgroundSize = '100% 90%',
+                 backgroundRepeat = 'no-repeat',
+                 backgroundPosition = 'center'
+               )
       )
     })
     
