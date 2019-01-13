@@ -1,0 +1,355 @@
+# first version of NLP Drug ADR Tagger script
+
+library(cleanNLP)
+library(tm)
+library(spacyr)
+library(textclean)
+library(stringr)
+library(dplyr)
+library(rtweet)
+
+
+# fill up all the lists (data.tables)
+# adrs (adverse drug reactions)
+
+# medical drugs
+
+# read twitter data
+
+# pre processing twitter data
+
+#spacy_install(conda = "auto", version = "latest", lang_models = "en",
+#              python_version = "3.6", envname = "spacy_condaenv",
+#              python_path = NULL, prompt = TRUE)
+
+
+
+
+## End(Not run)
+#spacy_download_langmodel()
+spacy_initialize()
+
+
+
+####################
+# Helper functions
+####################
+library(jsonlite)
+library(httr)
+GetSynonymes <- function(synonymes)
+{
+  result <- NULL
+  for(i in synonymes)
+  {
+    
+    url_git <- paste("http://wikisynonyms.ipeirotis.com/api/", i, sep="")
+    print(paste("lookup synonym",i,sep = " "))
+    # add to list
+    # Construct API request
+    repos <- httr::GET(url = url_git)
+    if(repos$status_code == 200)
+    {
+      t <- prettify(toJSON(httr::content(repos)))
+      k <- jsonlite::fromJSON(t,flatten = TRUE)
+      print(paste("print",k$terms[,1],sep = " "))
+      result <- data.table(rbind(result,data.table("terms" = k$terms[,1], "base" = i)))
+    }
+    else
+    {
+      result <- data.table(rbind(result,data.table("terms" = "", "base" = i)))
+      
+    }
+    
+    
+  }
+  
+  return(result)
+  
+}
+
+
+library(quanteda)
+TagDrugAndSynonymes <- function(text, adrs, drugnames)
+{
+  
+  result = NULL;
+  corp <- quanteda::corpus(text)
+  
+  
+  
+  
+  
+  # find all adrs in the corpus
+  y1 <- kwic(corp, adrs, window = 5, valuetype = "glob")
+  # find all drugs in the corpus
+  y2 <- kwic(corp, drugnames, window = 5, valuetype = "glob")
+  # join them together (symptom + drugname)
+  i <- y1 %>% dplyr::inner_join(y2,by="docname")
+  result <- cbind(i,data.table(sapply(i$docname, function(x) corp[x])))
+  return(result)
+}
+
+# res <- TagDrugAndSynonymes(rt$text,adr$V1,i1$drugname[1:1000])
+
+
+####################
+# Read tweets
+####################
+
+setwd("C:/work/CAS-BD6/Projektarbeit/R-code")
+rt <- parse_stream("daten/tweet20181228220924.json")
+rt <- rt %>% dplyr::filter(lang == "en")
+
+
+
+
+
+
+library(dplyr)
+library(tidytext)
+t <- spacy_parse(rt$text, pos = TRUE) %>%
+  unnest_tokens(word1, token) %>%
+  dplyr::filter(pos == "NOUN")
+
+
+
+
+
+
+
+
+
+
+############################
+# read symptom and drugnames
+############################
+
+library(data.table)
+setwd("C:/work/CAS-BD6/Projektarbeit/R-code")
+tbl_drug <- fread(file = "daten/Vocabularies/ADR Database/drugnames.csv",sep=",", header=TRUE, )
+tbl_synonymes <- fread(file = "daten/Vocabularies/adrs.csv",sep=",", header=FALSE)
+
+############################
+# enrich symptom list
+############################
+library(dplyr)
+tbl_synonymes <- GetSynonymes(tbl_synonymes$V1)
+tbl_synonymes$terms <-unlist(tbl_synonymes$terms, recursive = TRUE, use.names = TRUE)
+tbl_synonymes$unique_terms <- tbl_synonymes %>% dplyr::distinct(terms) %>% dplyr::pull()
+
+library(utf8)
+library(data.table)
+write.table(tbl_synonymes$unique_terms, file = "collected_synonymes.csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+############################
+# filter advertise tweets
+############################
+
+rt$isAdvertise <- str_detect(rt$text,"(f|ht)(tp)(s?)(://)(.*)[.|/](.*)")
+
+################################
+# find ration between advertise 
+################################
+
+s <- rt %>% dplyr::group_by(isAdvertise) %>% dplyr::count(isAdvertise)
+
+
+
+# remove advertising
+noadvertise <- rt %>% dplyr::select(isAdvertise,text) %>% dplyr::filter(isAdvertise == FALSE)
+
+
+outcome <- TagDrugAndSynonymes(noadvertise$text,tbl_synonymes$unique_terms,tbl_drug$drugname[1:1000])
+
+
+
+
+
+# create corpus
+corp <- quanteda::corpus(outcome)
+
+################################
+# POST (part of speach tagging
+################################
+parsed <- spacy_parse(corp, entity = TRUE)
+setup_tokenizers_backend()
+init_backend(type = "tokenizers")
+
+# annotate your text
+annotation <- cnlp_annotate(corp)
+
+####################################
+# resolve internet slang and emojis
+####################################
+
+noadvertise$text <- replace_internet_slang(corp)
+noadvertise$text <- replace_emoji_identifier(corp)
+
+
+library(utf8)
+utf8_print("\U0001f609")
+
+library(tm)
+corpus = Corpus(VectorSource(as.vector(outcome)))
+
+
+inspect(corpus[15])
+as.character(corpus[[20]])
+
+
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+
+
+dtm <- DocumentTermMatrix(corpus)   
+dim(dtm)
+inspect(dtm[1:3, 1:10])
+# Explore the corpus by DTM
+frequentTerms <- findFreqTerms(dtm, lowfreq=10)
+
+
+
+
+# Stemm using the Snowball algorithm (a Porter stemmer)
+
+library(SnowballC)
+corpus <- tm_map(corpus, content_transformer(tolower))
+inspect(corpus[151])
+as.character(corpus[[151]])
+
+corpus <- tm_map(corpus, removeNumbers)
+inspect(corpus[151])
+as.character(corpus[[151]])
+
+# removeURL <- function(x) gsub("(f|ht)(tp)(s?)(://)(.*)[.|/](.*)", "", x)
+
+###############################################
+# Regex explanation:
+# (f|ht) match "f" or "ht"
+# (tp) match "tp"
+# (s?) optionally match "s" if it exists
+# (://) match "://"
+# (.*) match every character (everything) up to
+# [.|/] a period or a forward-slash
+# (.*) then everything after that
+###############################################
+#corpus <- tm_map(corpus, removeURL)
+#inspect(corpus[151])
+#as.character(corpus[[151]])
+
+corpus <- tm_map(corpus, removePunctuation)
+#inspect(corpus[151])
+#as.character(corpus[[151]])
+
+dtm <- DocumentTermMatrix(corpus)   
+dim(dtm)
+inspect(dtm[1:3, 1:10])
+
+# Explore the corpus by DTM
+frequentTerms <- findFreqTerms(dtm, lowfreq=20)
+
+
+
+corpus <- tm_map(corpus, stemDocument)
+inspect(corpus[20])
+as.character(corpus[[20]])
+
+
+# Calculate the DocumentTermMatrix
+dtm <- DocumentTermMatrix(corpus)   
+dim(dtm)
+inspect(dtm[1:3, 1:10])
+
+# Explore the corpus by DTM
+frequentTerms <- findFreqTerms(dtm, lowfreq=2)
+frequentTerms
+
+associateTerms <- findAssocs(dtm, "neocitran", corlimit=0.4)
+
+# Get a sorted word frequency vector/data frame
+tf <- sort(colSums(as.matrix(dtm)), decreasing=TRUE)
+df.tf   <- data.frame(word=names(tf), tf=tf)
+
+# Visualize word frequencies
+library(ggplot2)
+p <- ggplot(subset(df.tf, tf>20), aes(word, tf))
+p <- p + geom_bar(stat="identity")
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))
+p
+
+# Plot the term frequencies using a wordcloud.
+library(wordcloud2)
+wordcloud2(subset(df.tf,tf>5),color = "random-light")
+
+
+####################
+# Cluster experiment
+####################
+
+tdm <- TermDocumentMatrix(corpus, control = list(wordLengths = c(1, Inf)))
+tdm
+dim(tdm)
+# Remove sparse terms in the TDM
+tdm.sparse <- removeSparseTerms(tdm, sparse = 0.95) 
+tdm.sparse
+m <- as.matrix(tdm.sparse)
+# Cluster terms
+distMatrix <- dist(scale(m))
+fit <- hclust(distMatrix, method = "ward.D")
+plot(fit)
+# Cut the tree into k appropriate clusters
+rect.hclust(fit, k = 4) 
+
+################################################
+# Topic model; LDA = Latent Dirichlet Allocation
+################################################
+
+library(topicmodels)
+dtm <- as.DocumentTermMatrix(tdm)
+# Find the sum of words in each document
+rowTotals <- apply(dtm, 1, sum) 
+dtm.new   <- dtm[rowTotals> 0, ]
+lda <- LDA(dtm.new, k = 4) # find k topics
+term <- terms(lda, 5) # first n terms of every topic 
+term
+# First topic identified for every document (tweet)
+topic <- topics(lda, 1)
+topics <- data.frame(date=as.POSIXct(rt$createdAt[1:length(topic)], topic))
+qplot(date, ..count.., data=topics, geom="density", fill=term[topic], alpha=I(.5))
+
+
+
+corpus = VectorSource(c("Hey @CzBacklash have a kolbold because you are one of reasons I went back to art. (If you aren't fallowing him on twitter please do he's a good guy and artist that doodles the smol lizard children) *cough* Shill *cough, cough* https://t.co/HSQJHZaIcL."))
+## Not run:
+
+
+#spacy_install(conda = "auto", version = "latest", lang_models = "en",
+#              python_version = "3.6", envname = "spacy_condaenv",
+#              python_path = NULL, prompt = TRUE)
+
+
+
+
+## End(Not run)
+#spacy_download_langmodel()
+spacy_initialize()
+
+parsed <- spacy_parse("Hey @CzBacklash have a kolbold because you are one of reasons I went back to art. (If you aren't fallowing him on twitter please do he's a good guy and artist that doodles the smol lizard children) *cough* Shill *cough, cough* https://t.co/HSQJHZaIcL", entity = TRUE)
+parsed <- spacy_parse("Stefan Trun, 51 years old, will join the board as a nonexecutive director Nov. 29.\n", entity = TRUE)
+entity_extract(parsed)
+entity_extract(parsed, type = "all")

@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1547326320050.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "3019689260",
+    "id" : "9C04C4A2",
+    "lastKnownWriteTime" : 1546716107,
+    "last_content_update" : 1546716107,
+    "path" : "C:/work/CAS-BD6/Projektarbeit/R-code/ADR_drug_tagger_script.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "21,66",
+        "scrollLine" : "0"
+    },
+    "relative_order" : 4,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

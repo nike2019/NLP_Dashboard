@@ -1,0 +1,314 @@
+library(cleanNLP)
+library(tm)
+library(spacyr)
+
+
+
+
+library(rtweet)
+setwd("C:/work/CAS-BD6/Projektarbeit/R-code")
+rt <- parse_stream("daten/tweet20190105084844.json")
+#rt <- crowd
+rt <- rt %>% filter(lang == "en")
+
+library(data.table)
+setwd("C:/work/CAS-BD6/Projektarbeit/R-code")
+tbl_synonymes <- fread(file = "Actual Datafiles/adrs.csv",sep=",", header=TRUE )
+tbl_drug <- fread(file = "Actual Datafiles/drugnames.csv",sep=",", header=TRUE)
+tbl_slangterms <- fread(file = "Actual Datafiles/twitter_slang_terms.csv",sep=",", header=TRUE)
+
+
+
+spacy_initialize()
+
+
+library(quanteda)
+
+corp <-  tokens_tolower(tokens(rt$text), keep_acronyms = TRUE)
+corp = corpus(unlist(corp,recursive = FALSE))
+corp = corpus(rt$text)
+
+
+
+
+
+library(data.table)
+
+
+
+dt <- data.table(doc_id = docnames(corp), text = texts(corp))
+
+drug_table <- data.table(drugname = c(sapply(tbl_drug$drugname[1:100],function(x) tolower(x))))
+synonyme_table <- data.table(synonyme = c(sapply(tbl_synonymes$synonyme,function(x) tolower(x))))
+slang_table <- data.table(slang_terms = c(sapply(tbl_slang_terms$slang.V1,function(x) tolower(x))),
+                          resolved_slang = c(sapply(tbl_slang_terms$exp.V1,function(x) tolower(x))))
+
+t1 <- spacy_parse(dt$text, pos = TRUE, dependency = TRUE) %>%
+  dplyr::select(token,doc_id,pos) %>%
+  dplyr::inner_join(dt, by = "doc_id") #%>%
+  #dplyr::filter(pos == "NOUN" | pos == "PROPN") 
+
+
+
+# variante 1 mit keyword in context (kwic)
+#t1$token <- data.table(token = sapply(t1$token,function(x){ tolower(x)}))
+#t1$token <- unlist(t1$token)
+#corp1 <- quanteda::corpus(t1, docid_field = "doc_id", text_field = "token")
+#corp1 <-  tokens_tolower(as.tokens(corp1$tokens), keep_acronyms = TRUE)
+#y1 <- kwic(corp1, drug_table, valuetype = "glob")
+
+
+# variante 1 mit amatch (lookup) (levenstein distance)
+v <- stringdist::amatch(t1$token,drug_table$drugname,maxDist = 1)
+# extrahieren der indexe welche einen konkreten wert beinhalten
+t1$drugName <- v 
+t1$drugName[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
+# maskieren aller medikamente
+t1$drugName[which( is.na(v) )] <- ""
+
+#master_data <- t1 %>% dplyr::select(drugName,text,doc_id)
+#master_data <- master_data %>% dplyr::filter(is.na(drugName) == FALSE)
+
+
+
+
+# variante 1 mit amatch (lookup)
+v <- stringdist::amatch(t1$token,synonyme_table$synonyme,maxDist = 0.01)
+# extrahieren der indexe welche einen konkreten wert beinhalten
+t1$synonyme <- v 
+t1$synonyme[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
+t1$synonyme[which( is.na(v) )] <- ""
+
+
+#resolveKeyWords <- function(keywords,tokens)
+#{
+  
+  #v <- stringdist::amatch(tokens,keywords,maxDist = 1)
+  # extrahieren der indexe welche einen konkreten wert beinhalten
+  #res <- v 
+  #res[which( !is.na(v) )] <- tokens[which( !is.na(v) )]
+  #res[which( is.na(v) )] <- ""
+  
+  #return(res)
+  
+  
+#}
+
+
+
+
+
+
+
+
+#kw_symptoms <- resolveKeyWords(synonyme_table$synonyme,t1$token) 
+#kw_drugs <- resolveKeyWords(drug_table$drugName,t1$token) 
+#kw_slangterms <- resolveKeyWords(slang_table$slang_terms,t1$token)
+
+#t1$synonyme <- kw_symptoms
+#t1$drugName <- kw_drugs
+#t1$slang_terms <- kw_slangterms
+
+
+AggregateDrugsAndSynonymes <- function(data)
+{
+  master_data <- data %>% dplyr::select(synonyme,drugName,text,doc_id)
+  
+  drug_data <- data %>% dplyr::select(drugName,doc_id) %>% filter(drugName != "")
+  syn_data <- data %>% dplyr::select(synonyme,doc_id) %>% filter(synonyme != "")
+  
+  syn_drug_data <- drug_data %>% dplyr::inner_join(syn_data, by = "doc_id")
+  
+  aggr_syn_drug_data <- syn_drug_data %>% 
+    dplyr::group_by(drugName) %>%
+    dplyr::summarise(synonymes = 
+                       paste(data.frame(synonyme) %>% dplyr::distinct(synonyme) %>% dplyr::pull(),collapse=" "),
+                     count = dplyr::n())
+  
+  
+  
+  syn_drug_data <- syn_drug_data %>% distinct()
+  syn_drug_data %>% dplyr::group_by(drugName) %>% dplyr::mutate(count = dplyr::summarise(n = n())) %>% select(drugName, synonyme, count)
+  
+  return(syn_drug_data)
+  
+  
+}
+
+
+
+
+AggregateDrugsAndSynonymes(t1)
+
+
+master_data <- t1 %>% dplyr::select(synonyme,drugName,text,doc_id)
+
+drug_data <- t1 %>% dplyr::select(drugName,doc_id) %>% filter(drugName != "")
+syn_data <- t1 %>% dplyr::select(synonyme,doc_id) %>% filter(synonyme != "")
+
+syn_drug_data <- drug_data %>% dplyr::inner_join(syn_data, by = "doc_id")
+
+aggr_syn_drug_data <- syn_drug_data %>% 
+  dplyr::group_by(drugName) %>%
+  dplyr::summarise(synonymes = 
+                   paste(data.frame(synonyme) %>% dplyr::distinct(synonyme) %>% dplyr::pull(),collapse=" "),
+                   count = dplyr::n())
+
+
+
+syn_drug_data <- syn_drug_data %>% distinct()
+syn_drug_data %>% dplyr::group_by(drugName) %>% dplyr::summarise(n = n())
+                   
+                 
+
+#master_data <- master_data %>% dplyr::filter(is.na(drugName) == FALSE && is.na(synonyme) == FALSE)
+
+
+
+
+
+#gruppieren der daten medikamente, symptome
+data <- master_data %>% 
+  dplyr::group_by(doc_id) %>% 
+  dplyr::summarise(drugs = 
+                     paste(data.frame(drugName) %>% dplyr::distinct(drugName) %>% dplyr::pull(),collapse=" "), 
+                     synonymes = 
+                     paste(data.frame(synonyme) %>% dplyr::distinct(synonyme) %>% dplyr::pull(),collapse=" "))
+                     
+# zusammenführen mit text
+master_data <- master_data %>% distinct(doc_id,text)
+data <- data %>% dplyr::inner_join(master_data, by = "doc_id")
+
+
+
+master_data <- master_data %>% 
+  distinct(doc_id,text) %>% 
+  dplyr::group_by(drugs) %>% 
+  dplyr::summarise(drugs = 
+                     paste(data.frame(synonymes) %>% dplyr::distinct(synonymes) %>% dplyr::pull(),collapse=" "))
+
+
+
+
+
+
+
+
+
+
+
+# t1 <- t1 %>% dplyr::distinct(token) 
+drug_table <- drug_table %>% dplyr::distinct(drugname) 
+
+
+# variante 2 mit fuzzy join
+library(fuzzyjoin)
+t2 <- t1 %>% stringdist_inner_join(drug_table, by = c(token = "drugname"), max_dist = 1)
+
+
+
+
+which_correct <- t2 %>%
+  group_by(token, drugname) %>%
+  summarize(guesses = n(), one_correct = any(token == drugname))
+
+
+which_correct
+t2 %>% count(drugname)
+
+
+
+
+
+
+
+t1$token
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#corpus = VectorSource(c("Hey @CzBacklash have a kolbold because you are one of reasons I went back to art. (If you aren't fallowing him on twitter please do he's a good guy and artist that doodles the smol lizard children) *cough* Shill *cough, cough* https://t.co/HSQJHZaIcL."))
+## Not run:
+
+
+#spacy_install(conda = "auto", version = "latest", lang_models = "en",
+#              python_version = "3.6", envname = "spacy_condaenv",
+#              python_path = NULL, prompt = TRUE)
+
+
+
+
+## End(Not run)
+#spacy_download_langmodel()
+spacy_initialize()
+
+parsed <- c("{#ad} Get excited y'all - there's a new #MomJeanConfession\" up on le blog where I'm sharing the Murray clan \"Do Sick Differently\" game plan with the help of Theraflu PowerPods \U0001f609 Just… https://t.co/0mFcSWi00b")
+#parsed <- spacy_parse("Stefan Trun, 51 years old, will join the board as a nonexecutive director Nov. 29.\n", entity = TRUE)
+#entity_extract(parsed)
+#entity_extract(parsed, type = "all")
+
+
+
+
+
+corpus = quanteda::corpus(DataframeSource(rt$text), readerControl = list(reader = readTabular(mapping = list(content = "textColumn", id = "ids"))))
+
+
+library(textclean)
+parsed <- replace_internet_slang(parsed)
+
+library(dplyr)
+library(tidytext)
+
+
+xi <- corp$documents %>% select(texts)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+corp1 = quanteda::corpus(t$word1)
+
+
+
+
+
+
+setup_tokenizers_backend()
+init_backend(type = "tokenizers")
+
+# annotate your text
+annotation <- spacyr::run_annotators(corpus)
+# pull off data tables
+token <- cnlp_get_token(annotation)
+dependency <- cnlp_get_dependency(annotation)
+document <- cnlp_get_document(annotation)
+coreference <- cnlp_get_coreference(annotation)
+entity <- cnlp_get_entity(annotation)
+sentiment <- cnlp_get_sentence(annotation)
+vector <- cnlp_get_vector(annotation)
+## End(Not run)

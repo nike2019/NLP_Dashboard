@@ -1,0 +1,29 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1547334476213.000,
+    "dirty" : false,
+    "encoding" : "",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "5EF4E8AF",
+    "lastKnownWriteTime" : 29273891505504324,
+    "last_content_update" : 1547334476213,
+    "path" : null,
+    "project_path" : null,
+    "properties" : {
+        "cacheKey" : "AE5D95F1",
+        "caption" : "drug_data",
+        "contentUrl" : "grid_resource/gridviewer.html?env=_rs_no_env&obj=drug_data&cache_key=AE5D95F1",
+        "displayedObservations" : 405,
+        "environment" : "_rs_no_env",
+        "object" : "drug_data",
+        "preview" : 0,
+        "totalObservations" : 405,
+        "variables" : 2
+    },
+    "relative_order" : 8,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_dataframe"
+}

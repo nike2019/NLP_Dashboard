@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1547326437144.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "1167787762",
+    "id" : "5E1D0430",
+    "lastKnownWriteTime" : 1547381149,
+    "last_content_update" : 1547381149237,
+    "path" : "C:/work/CAS-BD6/Projektarbeit/R-code/CleanNLP_Example.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "166,0",
+        "scrollLine" : "0"
+    },
+    "relative_order" : 5,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

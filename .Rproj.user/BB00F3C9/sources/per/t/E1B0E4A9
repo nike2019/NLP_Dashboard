@@ -1,0 +1,29 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1547336432835.000,
+    "dirty" : false,
+    "encoding" : "",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "E1B0E4A9",
+    "lastKnownWriteTime" : 28429423625830483,
+    "last_content_update" : 1547336432835,
+    "path" : null,
+    "project_path" : null,
+    "properties" : {
+        "cacheKey" : "278B5B06",
+        "caption" : "aggr_syn_drug_data",
+        "contentUrl" : "grid_resource/gridviewer.html?env=_rs_no_env&obj=aggr_syn_drug_data&cache_key=278B5B06",
+        "displayedObservations" : 13,
+        "environment" : "_rs_no_env",
+        "object" : "aggr_syn_drug_data",
+        "preview" : 0,
+        "totalObservations" : 13,
+        "variables" : 3
+    },
+    "relative_order" : 9,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_dataframe"
+}
