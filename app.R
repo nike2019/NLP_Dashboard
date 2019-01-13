@@ -94,7 +94,8 @@ ui <- dashboardPage(
                              
                         
                ),
-               tabPanel("LDA")
+               tabPanel("LDA",
+               DT::dataTableOutput("aggr_table"),style = "height:630px; overflow-y: scroll;")
       
       )))
     
@@ -115,7 +116,7 @@ ui <- dashboardPage(
     
     req(input$file3)
     if(!file.exists(input$file3)){
-      input$file3 <- "C:/work/CAS-BD6/Projektarbeit/R-code/daten/Vocabularies/ADR Database/drugnames.csv"
+      input$file3 <- "/daten/drugnames.csv"
       
     }
     tbl_drug <- fread(file = input$file3$datapath,sep=",", header=TRUE)
@@ -133,13 +134,13 @@ ui <- dashboardPage(
   {
     
     rt <- rs_r()
-    setwd("C:/work/CAS-BD6/Projektarbeit/R-code/")
+    
     #tbl_drug <- drug_r() #fread(file = "Actual Datafiles/drugnames.csv",sep=",", header=TRUE, )
-    tbl_drug <- fread(file = "Actual Datafiles/drugnames.csv",sep=",", header=TRUE)
+    tbl_drug <- fread(file = "daten/drugnames.csv",sep=",", header=TRUE)
     
     
-    tbl_synonymes <- fread(file = "Actual Datafiles/adrs.csv",sep=",", header=TRUE)
-    tbl_slangterms <- fread(file = "Actual Datafiles/twitter_slang_terms.csv",sep=",", header=TRUE)
+    tbl_synonymes <- fread(file = "daten/adrs.csv",sep=",", header=TRUE)
+    tbl_slangterms <- fread(file = "daten/twitter_slang_terms.csv",sep=",", header=TRUE)
   
     ############################
     # enrich symptom list
@@ -147,9 +148,8 @@ ui <- dashboardPage(
     library(dplyr)
     if(input$synonymes == TRUE)
     {
-      tbl_synonymes <- GetSynonymes(tbl_synonymes$V1)  
+      tbl_synonymes <- GetSynonymesFromWordNet(tbl_synonymes$synonyme)  
     }
-  
   
     tbl_synonymes$terms <-unlist(tbl_synonymes$terms, recursive = TRUE, use.names = TRUE)
     tbl_synonymes$unique_terms <- tbl_synonymes %>% dplyr::distinct(terms) %>% dplyr::pull()
@@ -188,6 +188,23 @@ ui <- dashboardPage(
     
   })
   
+  aggr_data_text_r <- reactive({
+    
+    outcome <- AggregateDrugsAndSynonymesWithText(ps())
+    
+  })
+  
+  aggr_data_r <- reactive({
+    
+    
+    
+    outcome <- AggregateDrugsAndSynonymes(ps())
+    outcome
+    
+    
+    
+    })
+  
   
   
   
@@ -200,13 +217,21 @@ ui <- dashboardPage(
     
     
     if(input$disp == "head") {
-      return(head(data.table(text = ps()$text, "drug(s)" = ps()$drugs, "symptome" = ps()$synonymes)))
+      return(head(data.table(text = aggr_data_text_r()$text, "drug(s)" = aggr_data_text_r()$drugs, "symptome" = aggr_data_text_r()$synonymes)))
     }
     else {
-      return(data.table(text = ps()$text, "drug(s)" = ps()$drugs, "symptome" = ps()$synonymes))
+      return(data.table(text = aggr_data_text_r()$text, "drug(s)" = aggr_data_text_r()$drugs, "symptome" = aggr_data_text_r()$synonymes))
     }
     
   })
+    
+    
+    output$aggr_table <- renderDataTable({
+      return(datatable(aggr_data_r()) %>% formatStyle(
+        'synonymes',
+        backgroundColor = styleInterval(3.4, c('gray', 'yellow')))
+      )
+    })
     
     output$wordplot <- renderPlot({
     
