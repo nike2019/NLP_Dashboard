@@ -9,7 +9,7 @@ library(wordnet)
 resolveKeyWords <- function(keywords,tokens)
 {
   
-  v <- stringdist::amatch(t1$token,synonyme_table$synonyme,maxDist = 1)
+  v <- stringdist::amatch(t1$token,symptome_table$symptome,maxDist = 1)
   # extrahieren der indexe welche einen konkreten wert beinhalten
   keywords <- v 
   keywords[which( !is.na(v) )] <- tokens[which( !is.na(v) )]
@@ -20,22 +20,39 @@ resolveKeyWords <- function(keywords,tokens)
   
 }
 
-
-
-
-AggregateDrugsAndSynonymes <- function(data)
+CorpusPreProcessing <- function(text)
 {
-  master_data <- data %>% dplyr::select(synonyme,drugName,text,doc_id)
+  
+  library(utf8)
+  library(SnowballC)
+  
+  corpus <- Corpus(VectorSource(as.vector(text)))
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  corpus <- tm_map(corpus, removeNumbers)
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  corpus <- tm_map(corpus, stemDocument)
+  corp <- corpus(corpus)
+  dt <- data.table(doc_id = docnames(corp), text = texts(corp))
+  
+  return(dt)
+  
+}
+
+
+AggregateDrugsAndsymptomes <- function(data)
+{
+  master_data <- data %>% dplyr::select(symptome,drugName,text,doc_id)
   
   drug_data <- data %>% dplyr::select(drugName,doc_id) %>% filter(drugName != "")
-  syn_data <- data %>% dplyr::select(synonyme,doc_id) %>% filter(synonyme != "")
+  syn_data <- data %>% dplyr::select(symptome,doc_id) %>% filter(symptome != "")
   
   syn_drug_data <- drug_data %>% dplyr::inner_join(syn_data, by = "doc_id")
   
   aggr_syn_drug_data <- syn_drug_data %>% 
     dplyr::group_by(drugName) %>%
-    dplyr::summarise(synonymes = 
-                       paste(data.frame(synonyme) %>% dplyr::distinct(synonyme) %>% dplyr::pull(),collapse=" "),
+    dplyr::summarise(symptomes = 
+                       paste(data.frame(symptome) %>% dplyr::distinct(symptome) %>% dplyr::pull(),collapse=" "),
                      count = dplyr::n())
   
   
@@ -49,24 +66,24 @@ AggregateDrugsAndSynonymes <- function(data)
 }
 
 
-AggregateDrugsAndSynonymesWithText <- function(data)
+AggregateDrugsAndsymptomesWithText <- function(data)
 {
   
-  master_data <- data %>% dplyr::select(synonyme,drugName,text,doc_id)
-  #master_data <- master_data %>% dplyr::filter(is.na(drugName) == FALSE && is.na(synonyme) == FALSE)
+  master_data <- data %>% dplyr::select(symptome,drugName,text,doc_id)
+  #master_data <- master_data %>% dplyr::filter(is.na(drugName) == FALSE && is.na(symptome) == FALSE)
   
   #gruppieren der daten medikamente, symptome
   data <- master_data %>% 
     dplyr::group_by(doc_id) %>% 
     dplyr::summarise(drugs = 
                        paste(data.frame(drugName) %>% dplyr::distinct(drugName) %>% dplyr::pull(),collapse="\n\r"), 
-                     synonymes = 
-                       paste(data.frame(synonyme) %>% dplyr::distinct(synonyme) %>% dplyr::pull(),collapse="\n\r"))
+                     symptomes = 
+                       paste(data.frame(symptome) %>% dplyr::distinct(symptome) %>% dplyr::pull(),collapse="\n\r"))
   
   # zusammenführen mit text
   master_data <- master_data %>% distinct(doc_id,text)
   data <- data %>% dplyr::inner_join(master_data, by = "doc_id")
-  data <- data %>% dplyr::filter((data$synonymes != "") & (data$drugs != ""))
+  data <- data %>% dplyr::filter((data$symptomes != "") & (data$drugs != ""))
   
   return(data)
   
@@ -77,7 +94,7 @@ AggregateDrugsAndSynonymesWithText <- function(data)
 
 
 
-TagDrugAndSynonymes <- function(text, adrs, drugnames, slangterms)
+TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
 {
   
   
@@ -91,7 +108,7 @@ TagDrugAndSynonymes <- function(text, adrs, drugnames, slangterms)
   dt <- data.table(doc_id = docnames(corp), text = texts(corp))
   
   drug_table <- data.table(drugname = c(sapply(drugnames$drugname,function(x) tolower(x))))
-  synonyme_table <- data.table(synonyme = c(sapply(adrs$unique_terms,function(x) tolower(x))))
+  symptome_table <- data.table(symptome = c(sapply(adrs$unique_synonymes,function(x) tolower(x))))
   slang_table <- data.table(slang_terms = c(sapply(slangterms$slang.V1,function(x) tolower(x))),
                             resolved_slang = c(sapply(slangterms$exp.V1,function(x) tolower(x))))
   
@@ -103,7 +120,10 @@ TagDrugAndSynonymes <- function(text, adrs, drugnames, slangterms)
   
   
   # variante mit keyword in context (kwic)
-  t1$token <- sapply(t1$token,function(x){ tolower(x)})
+  #t1$token <- sapply(t1$token,function(x){ tolower(x)})
+  
+  res <- CorpusPreProcessing(t1$token)
+  t1$token <- res$text
   
   
   # variante 1 mit amatch (lookup) (levenstein distance)
@@ -115,11 +135,11 @@ TagDrugAndSynonymes <- function(text, adrs, drugnames, slangterms)
   t1$drugName[which( is.na(v) )] <- ""
   
   
-  v <- stringdist::amatch(t1$token,synonyme_table$synonyme,maxDist = 0.1)
+  v <- stringdist::amatch(t1$token,symptome_table$symptome,maxDist = 0.1)
   # extrahieren der indexe welche einen konkreten wert beinhalten
-  t1$synonyme <- v 
-  t1$synonyme[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
-  t1$synonyme[which( is.na(v) )] <- ""
+  t1$symptome <- v 
+  t1$symptome[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
+  t1$symptome[which( is.na(v) )] <- ""
   
   v <- stringdist::amatch(t1$token,slang_table$slang_terms,maxDist = 1)
   # extrahieren der indexe welche einen konkreten wert beinhalten
@@ -135,10 +155,10 @@ TagDrugAndSynonymes <- function(text, adrs, drugnames, slangterms)
 }
 
 
-GetSynonymes <- function(synonymes)
+GetSynonymes <- function(symptomes)
 {
   result <- NULL
-  for(i in synonymes)
+  for(i in symptomes)
   {
     
     url_git <- paste("http://wikisynonyms.ipeirotis.com/api/", i, sep="")
@@ -150,12 +170,12 @@ GetSynonymes <- function(synonymes)
     {
       t <- prettify(toJSON(httr::content(repos)))
       k <- jsonlite::fromJSON(t,flatten = TRUE)
-      print(paste("print",k$terms[,1],sep = " "))
-      result <- data.table(rbind(result,data.table("terms" = k$terms[,1], "base" = i)))
+      print(paste("print",k$synonymes[,1],sep = " "))
+      result <- data.table(rbind(result,data.table("synonymes" = k$synonymes[,1], "base" = i)))
     }
     else
     {
-      result <- data.table(rbind(result,data.table("terms" = "", "base" = i)))
+      result <- data.table(rbind(result,data.table("synonymes" = "", "base" = i)))
       
     }
     
@@ -170,23 +190,23 @@ GetSynonymes <- function(synonymes)
 
 
 
-GetSynonymesFromWordNet <- function(synonymes)
+GetSynonymesFromWordNet <- function(symptomes)
 {
   
   setDict("C:/Program Files (x86)/WordNet/2.1/dict")
   result <- NULL
-  for(i in synonymes)
+  for(i in symptomes)
   {
     tryCatch({
       x <- synonyms(i, "NOUN")
       if(length(x) > 0)
       {
         print(paste("print",x,sep = " "))
-        result <- data.table(rbind(result,data.table("terms" = x, "synonyme" = i),fill = TRUE))
+        result <- data.table(rbind(result,data.table("synonymes" = x, "symptome" = i),fill = TRUE))
       }
       else
       {
-        result <- data.table(rbind(result,data.table("terms" = i, "synonyme" = i), fill = TRUE))
+        result <- data.table(rbind(result,data.table("synonymes" = i, "symptome" = i), fill = TRUE))
         
       }
     },
@@ -200,18 +220,4 @@ GetSynonymesFromWordNet <- function(synonymes)
 }
 
 
-CorpusPreProcessing <- function(text)
-{
-  
-  library(utf8)
-  corpus <- Corpus(VectorSource(as.vector(text)))
-  
-  
-  #corpus <- tm_map(corpus, content_transformer(tolower))
-  corpus <- tm_map(corpus, removeNumbers)
-  corpus <- tm_map(corpus, removePunctuation)
-  corpus <- tm_map(corpus, removeWords, stopwords("english"))
-  
-  return(corpus)
-  
-}
+
