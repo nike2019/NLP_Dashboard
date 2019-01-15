@@ -66,7 +66,7 @@ ui <- dashboardPage(
       tags$hr(),
       
       
-      checkboxInput("synonymes","generate synonymes", value = FALSE),
+      checkboxInput("symptomes","generate symptomes", value = FALSE),
       
       # Input: Select number of rows to display ----
       radioButtons("disp", "Display",
@@ -91,7 +91,7 @@ ui <- dashboardPage(
                ),
                tabPanel("Frequent used words",
                         sliderInput("wordOCc","word occurence",min = 1, max = 100, value = 2),
-                        plotOutput("wordplot")            
+                        plotOutput("wordplot" ,width = "100%")            
                              
                         
                ),
@@ -115,12 +115,8 @@ ui <- dashboardPage(
   
   drug_r <- reactive({
     
-    req(input$file3)
-    if(!file.exists(input$file3)){
-      input$file3 <- "/daten/drugnames.csv"
-      
-    }
-    tbl_drug <- fread(file = input$file3$datapath,sep=",", header=TRUE)
+    #req(input$file3)
+    file <- ifelse(is.null(input$file3$datapath), " ", input$file3$datapath)
     
   })
   
@@ -137,24 +133,27 @@ ui <- dashboardPage(
     rt <- rs_r()
     
     #tbl_drug <- drug_r() #fread(file = "Actual Datafiles/drugnames.csv",sep=",", header=TRUE, )
-    tbl_drug <- fread(file = "daten/drugnames.csv",sep=",", header=TRUE)
     
+    drugfile <- drug_r()
     
-    tbl_synonymes <- fread(file = "daten/adrs.csv",sep=",", header=TRUE)
+    tbl_drug <- fread(file = ifelse(file.exists(drugfile), drugfile, "daten/drugnames.csv"),sep=",", header=TRUE)
+    print(drugfile)
+    
+    tbl_symptomes <- fread(file = "daten/adrs.csv",sep=",", header=TRUE)
     tbl_slangterms <- fread(file = "daten/twitter_slang_terms.csv",sep=",", header=TRUE)
   
     ############################
     # enrich symptom list
     ############################
     library(dplyr)
-    if(input$synonymes == TRUE)
+    if(input$symptomes == TRUE)
     {
-      tbl_synonymes <- GetSynonymesFromWordNet(tbl_synonymes$synonyme)  
+      tbl_symptomes <- GetsymptomesFromWordNet(tbl_symptomes$symptome)  
     }
   
-    tbl_synonymes$terms <-unlist(tbl_synonymes$terms, recursive = TRUE, use.names = TRUE)
-    tbl_synonymes$unique_terms <- tbl_synonymes %>% dplyr::distinct(terms) %>% dplyr::pull()
-    write.table(tbl_synonymes$unique_terms, file = "collected_synonymes.csv")
+    tbl_symptomes$synonymes <-unlist(tbl_symptomes$synonymes, recursive = TRUE, use.names = TRUE)
+    tbl_symptomes$unique_synonymes <- tbl_symptomes %>% dplyr::distinct(synonymes) %>% dplyr::pull()
+    write.table(tbl_symptomes$unique_synonymes, file = "collected_symptomes.csv")
     
     
     if('extended_tweet.full_text' %in% names(rt))
@@ -183,7 +182,7 @@ ui <- dashboardPage(
     noadvertise <- rt %>% dplyr::select(isAdvertise,text) %>% dplyr::filter(isAdvertise == FALSE)
   
   
-    outcome <- TagDrugAndSynonymes(noadvertise$text,tbl_synonymes,tbl_drug[1:100],tbl_slangterms)
+    outcome <- TagDrugAndsymptomes(noadvertise$text,tbl_symptomes,tbl_drug[1:100],tbl_slangterms)
     #outcome$advertising_ratio <- s
   
     
@@ -191,23 +190,50 @@ ui <- dashboardPage(
   
   aggr_data_text_r <- reactive({
     
-    outcome <- AggregateDrugsAndSynonymesWithText(ps())
+    outcome <- AggregateDrugsAndsymptomesWithText(ps())
     
   })
   
   aggr_data_r <- reactive({
     
-    
-    
-    outcome <- AggregateDrugsAndSynonymes(ps())
-    outcome
-    
-    
+    outcome <- AggregateDrugsAndsymptomes(ps())
     
     })
   
   
-  
+  corp_preprocessing_r <- reactive({
+    rt <- ps()
+    corpus <- CorpusPreProcessing(rt$text)
+    
+    res <- corpus$text
+  }) 
+    
+    
+    
+    dtm_matrix_r <-  reactive({
+      
+      
+      corpus <- corp_preprocessing_r()
+      dtm <- DocumentTermMatrix(Corpus(VectorSource(as.vector(corpus))))
+      tf <- sort(colSums(as.matrix(dtm)), decreasing=TRUE)
+      
+      if(input$disp == "head") {
+        
+        
+        res   <- data.frame(list(tf = tf, word=names(tf)))
+      }
+      else
+      {
+        res   <- data.frame(tf = tf, word=names(tf))
+        
+      }  
+      
+      
+      
+    })
+    
+    
+     
   
   
     output$trace_table <- renderDataTable({
@@ -218,10 +244,10 @@ ui <- dashboardPage(
     
     
     if(input$disp == "head") {
-      return(head(data.table(text = aggr_data_text_r()$text, "drug(s)" = aggr_data_text_r()$drugs, "symptome" = aggr_data_text_r()$synonymes)))
+      return(head(data.table(text = aggr_data_text_r()$text, "drug(s)" = aggr_data_text_r()$drugs, "symptome" = aggr_data_text_r()$symptomes)))
     }
     else {
-      return(data.table(text = aggr_data_text_r()$text, "drug(s)" = aggr_data_text_r()$drugs, "symptome" = aggr_data_text_r()$synonymes))
+      return(data.table(text = aggr_data_text_r()$text, "drug(s)" = aggr_data_text_r()$drugs, "symptome" = aggr_data_text_r()$symptomes))
     }
     
   })
@@ -239,31 +265,21 @@ ui <- dashboardPage(
       )
     })
     
+    
+    
     output$wordplot <- renderPlot({
     
-    
-    rt <- rs_r()
-    corpus <- CorpusPreProcessing(rt$text)
-    dtm <- DocumentTermMatrix(corpus) 
-    tf <- sort(colSums(as.matrix(dtm)), decreasing=TRUE)
-    res  <- data.frame(word=names(tf), tf=tf)
-    if(input$disp == "head") {
-      df.tf   <- head(data.frame(word=names(tf), tf=tf))
-    }
-    else
-    {
-      df.tf   <- data.frame(word=names(tf), tf=tf)
       
-    }
+    t <- dtm_matrix_r()
     
+    p <- ggplot(subset(t, tf>input$wordOCc), aes(word, tf))
+    p <- p + geom_bar(stat="identity", fill="steelblue", width = 0.6)
+    p <- p + geom_text(aes(label=tf), hjust=1.6, color="white", size=3.5)
+    p <- p + theme_minimal()
+    p <- p + coord_flip()
+    return(p)
     
-    
-    p <- ggplot(subset(df.tf, tf>input$wordOCc), aes(word, tf))
-    p <- p + geom_bar(stat="identity")
-    p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))
-    p
-    
-  })
+  },height = 600)
     
     
   
