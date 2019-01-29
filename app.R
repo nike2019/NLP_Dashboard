@@ -293,6 +293,7 @@ server <- function(input, output) {
   ################################
   aggr_data_text_r <- reactive({
     rt <- rs_r()
+    rt$text <- resolveInternetSlang(rt$text)
     df <- ps()
     outcome <- AggregateDrugsAndsymptomesWithText(rt$text, df)
     
