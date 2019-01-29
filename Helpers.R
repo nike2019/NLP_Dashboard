@@ -2,9 +2,23 @@ library(quanteda)
 library(spacyr)
 library(wordnet)
 library(mongolite)
+library(textclean)
 
 
-
+resolveInternetSlang <- function(text)
+{
+  
+  result <- replace_internet_slang(text)
+  replace_internet_slang(text, ignore.case = FALSE)
+  replace_internet_slang(text, replacement = '<<SLANG>>')
+  replace_internet_slang(
+    text, 
+    replacement = lexicon::hash_internet_slang[[2]]
+  )
+  
+  return (result)
+  
+}
 
 connectMongoDB <- function(collectionName,dbName)
 {
@@ -39,9 +53,11 @@ GetSimilarWords <- function(tok, sympt)
     m <- nchar(i) / 3
     m <- round(m)
     sd <- sd[sd <= m]
+    names(sd) <- unique(names(sd))
     l <- length(sd)
     if (length(sd) > 0)
     {
+      
       print(paste("add data to dataframe", sd, sep = ":"))
       df[, ncol(df) + 1] <- c(c(names(sd)), c(rep(NA, max.len - l)))
       names(df)[ncol(df)] <- i
