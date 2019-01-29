@@ -222,6 +222,9 @@ server <- function(input, output) {
     
     rt <- rs_r()
     
+    
+    rt$text <- resolveInternetSlang(rt$text)
+    
     tbl_drug <- drug_r()
     tbl_symptomes <- symptom_r()
     
