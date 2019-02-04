@@ -3,6 +3,19 @@ library(spacyr)
 library(wordnet)
 library(mongolite)
 library(textclean)
+library(tm)
+library(data.table)
+library(syuzhet)
+
+
+resolveEmotions <- function(text)
+{
+  emotions <- get_nrc_sentiment(text)
+  emo_bar = colSums(emotions)
+  emo_sum = data.frame(count=emo_bar, emotion=names(emo_bar))
+  emo_sum$emotion = factor(emo_sum$emotion, levels=emo_sum$emotion[order(emo_sum$count, decreasing = TRUE)])
+  return (emotions)
+}
 
 
 resolveInternetSlang <- function(text)
@@ -16,6 +29,7 @@ resolveInternetSlang <- function(text)
     replacement = lexicon::hash_internet_slang[[2]]
   )
   
+  print(result)
   return (result)
   
 }
@@ -34,7 +48,7 @@ findMax <- function(x, y) {
   for (tok in x)
   {
     sd <- as.vector(stringdist::stringdist(tok, y, method = "lv"))
-    m <- nchar(tok) %% 4
+    m <- nchar(tok) / 3
     len <- length(sd[sd <= m])
     max.len <- ifelse(len > max.len, len, max.len)
   }
@@ -105,19 +119,19 @@ CorpusPreProcessing <- function(text)
 
 AggregateDrugsAndsymptomes <- function(data)
 {
-  master_data <- data %>% dplyr::select(symptom, drugName, doc_id)
+  master_data <- data %>% dplyr::select(symptome, drugname, doc_id)
   
   master_data <-
-    master_data %>% filter(drugName != "" & symptom != "")
+    master_data %>% filter(drugname != "" & symptome != "")
   
   
   
   aggr_syn_drug_data <- master_data %>%
-    dplyr::group_by(drugName) %>%
+    dplyr::group_by(drugname) %>%
     dplyr::summarise(
       symptomes =
         paste(
-          data.frame(symptom) %>% dplyr::distinct(symptom) %>% dplyr::pull(),
+          data.table(symptome) %>% dplyr::distinct(symptome) %>% dplyr::pull(),
           collapse = " "
         ),
       count = dplyr::n()
@@ -133,12 +147,16 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
   
   dt <- data.table(doc_id = docnames(corp), text = texts(corp))
   
+  dt$has_url <- str_detect(dt$text, "(f|ht)(tp)(s?)(://)(.*)[.|/](.*)")
+  
+  
+  
   data <-
     data %>% dplyr::select(doc_id,
-                           drugName,
+                           drugname,
                            symptom_prewords,
                            symptom_postwords,
-                           symptom,
+                           symptome,
                            lemma) %>% dplyr::distinct() %>%
     dplyr::inner_join(dt, by = "doc_id")
   
@@ -146,7 +164,7 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
   
   
   master_data <-
-    data %>% dplyr::select(symptom, drugName, text, doc_id, lemma)
+    data %>% dplyr::select(symptome, drugname, text, doc_id, lemma,has_url)
   
   
   #gruppieren der daten medikamente, symptome
@@ -155,13 +173,13 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
     dplyr::summarise(
       drugs =
         paste(
-          data.frame(drugName) %>% dplyr::distinct(drugName) %>% dplyr::pull(),
-          collapse = "\n\r"
+          data.frame(drugname) %>% dplyr::distinct(drugname) %>% dplyr::pull(),
+          collapse = ""
         ),
       symptomes =
         paste(
-          data.frame(symptom) %>% dplyr::distinct(symptom) %>% dplyr::pull(),
-          collapse = "\n\r"
+          data.frame(symptome) %>% dplyr::distinct(symptome) %>% dplyr::pull(),
+          collapse = ""
         ),
       tokens = paste(
         data.frame(lemma) %>% dplyr::distinct(lemma) %>% dplyr::pull(),
@@ -171,11 +189,11 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
     )
   
   # zusammenführen mit text
-  master_data <- master_data %>% distinct(doc_id, text)
+  master_data <- master_data %>% distinct(doc_id, text,has_url)
   data <- data %>% dplyr::inner_join(master_data, by = "doc_id")
   data <-
     data %>% dplyr::filter((data$symptomes != "") & (data$drugs != ""))
-  
+  print(paste("debug 3: ",dt$doc_id,sep = " "))
   return(data)
   
   
@@ -185,120 +203,6 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
 
 
 
-# TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
-# {
-#
-#
-#   spacy_initialize()
-#   result = NULL
-#   corp <- quanteda::corpus(text)
-#
-#
-#
-#
-#   dt <- data.table(doc_id = docnames(corp), text = texts(corp))
-#
-#   drug_table <- data.table(drugname = c(sapply(drugnames$drugname,function(x) tolower(x))))
-#   symptome_table <- data.table(symptome = c(sapply(adrs$unique_synonymes,function(x) tolower(x))))
-#   slang_table <- data.table(slang_terms = c(sapply(slangterms$slang.V1,function(x) tolower(x))),
-#                             resolved_slang = c(sapply(slangterms$exp.V1,function(x) tolower(x))))
-#
-#   t1 <- spacy_parse(dt$text, pos = TRUE, dependency = TRUE) %>%
-#     dplyr::select(token,doc_id,pos) %>%
-#     dplyr::inner_join(dt, by = "doc_id") #%>%
-#     #dplyr::filter(pos == "NOUN" | pos == "PROPN" | pos == "VERB")
-#
-#
-#
-#   # variante mit keyword in context (kwic)
-#   #t1$token <- sapply(t1$token,function(x){ tolower(x)})
-#
-#   res <- CorpusPreProcessing(t1$token)
-#   t1$token <- res$text
-#
-#
-#   # variante 1 mit amatch (lookup) (levenstein distance)
-#   v <- stringdist::amatch(t1$token,drug_table$drugname,maxDist = 1)
-#   # extrahieren der indexe welche einen konkreten wert beinhalten
-#   t1$drugName <- v
-#   t1$drugName[which( !is.na(v) )] <- t1$token[which( !is.na(v),  )]
-#   # maskieren aller medikamente
-#   t1$drugName[which( is.na(v) )] <- ""
-#
-#
-#   v <- stringdist::amatch(t1$token,symptome_table$symptome,maxDist = 0.1)
-#   # extrahieren der indexe welche einen konkreten wert beinhalten
-#   t1$symptome <- v
-#   t1$symptome[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
-#   t1$symptome[which( is.na(v) )] <- ""
-#
-#   v <- stringdist::amatch(t1$token,slang_table$slang_terms,maxDist = 1)
-#   # extrahieren der indexe welche einen konkreten wert beinhalten
-#   t1$slang <- v
-#   t1$slang[which( !is.na(v) )] <- t1$token[which( !is.na(v) )]
-#   t1$slang[which( is.na(v) )] <- ""
-#
-#
-#
-#   return(t1)
-#
-#
-# }
-
-
-# TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
-# {
-#
-#
-#   spacy_initialize()
-#   result = NULL
-#   corp <- quanteda::corpus(text)
-#
-#   dt <- data.table(doc_id = docnames(corp), text = texts(corp))
-#
-#   drug_table <- data.table(drugname = c(sapply(drugnames$drugname,function(x) tolower(x))))
-#   symptome_table <- data.table(symptome = c(sapply(adrs$unique_synonymes,function(x) tolower(x))))
-#   slang_table <- data.table(slang_terms = c(sapply(slangterms$slang.V1,function(x) tolower(x))),
-#                             resolved_slang = c(sapply(slangterms$exp.V1,function(x) tolower(x))))
-#
-#
-#   t1 <- spacy_parse(dt$text, pos = TRUE, dependency = TRUE) %>%
-#     dplyr::select(token,doc_id,pos)
-#
-#
-#
-#
-#
-#   ann_symptomes <- kwic(dt$text, phrase(symptome_table$symptome), valuetype = "glob", case_insensitive = TRUE) %>%
-#     dplyr::select(docname,pre,post,keyword) %>%
-#     dplyr::mutate(keyword = NULL, symptom = keyword) %>%
-#     dplyr::mutate(pre = NULL, symptom_prewords = pre) %>%
-#     dplyr::mutate(post = NULL, symptom_postwords = post) %>%
-#     dplyr::mutate(docname = NULL, doc_id = docname)
-#
-#
-#
-#
-#   res <- CorpusPreProcessing(t1$token)
-#   t1$token <- res$text
-#
-#   # variante 1 mit amatch (lookup) (levenstein distance)
-#   v <- stringdist::amatch(t1$token,drug_table$drugname,maxDist = 1)
-#   # extrahieren der indexe welche einen konkreten wert beinhalten
-#   t1$drugName <- v
-#   t1$drugName[which( !is.na(v) )] <- t1$token[which( !is.na(v),  )]
-#   # maskieren aller medikamente
-#   t1$drugName[which( is.na(v) )] <- ""
-#
-#
-#   res <- t1 %>% dplyr::inner_join(ann_symptomes, by = "doc_id")
-#
-#   result <- res %>% dplyr::select(doc_id,drugName,symptom_prewords,symptom_postwords,symptom) %>% dplyr::distinct() %>%
-#     dplyr::inner_join(dt, by = "doc_id")
-#
-#   return(result)
-#
-# }
 
 
 TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
@@ -313,31 +217,32 @@ TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
   
   drug_table <-
     data.table(drugname = c(sapply(drugnames$drugname, function(x)
-      tolower(x))))
+      tolower(x)))) %>% dplyr::distinct()
   symptome_table <-
-    data.table(symptome = c(sapply(adrs$unique_synonymes, function(x)
-      tolower(x))))
+    data.table(symptome = c(sapply(adrs, function(x)
+      tolower(x)))) %>% dplyr::distinct()
   slang_table <-
     data.table(slang_terms = c(sapply(slangterms$slang.V1, function(x)
       tolower(x))),
       resolved_slang = c(sapply(slangterms$exp.V1, function(x)
-        tolower(x))))
-  
-  symptome_table <- symptome_table %>% distinct()
+        tolower(x)))) %>% dplyr::distinct()
   
   
-  t1 <- spacy_parse(
+  
+  
+  res <- spacy_parse(
     dt$text,
     pos = TRUE,
     dependency = TRUE,
     lemma = TRUE,
+    multithread = TRUE,
     additional_attributes = c(
       "like_num",
-      "like_url",
       "like_email",
       "is_digit",
       "is_stop",
-      "is_alpha"
+      "is_alpha",
+      "like_url"
     )
   ) %>%
     dplyr::select(
@@ -347,11 +252,21 @@ TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
       pos,
       like_num,
       like_email,
-      like_url,
       is_digit,
       is_stop,
-      is_alpha
+      is_alpha,
+      like_url
     )
+  
+  
+  
+  filtered_doc_ids <- res %>% filter(
+    like_email == TRUE &
+    like_url == TRUE
+    
+  ) %>% select(doc_id) %>% distinct()
+  
+  
   
   
   ann_symptomes <-
@@ -362,35 +277,27 @@ TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
       case_insensitive = TRUE
     ) %>%
     dplyr::select(docname, pre, post, keyword) %>%
-    dplyr::mutate(keyword = NULL, symptom = paste0("[", keyword , "]")) %>%
+    dplyr::mutate(keyword = NULL, symptome = paste0("[", keyword , "]")) %>%
     dplyr::mutate(pre = NULL, symptom_prewords = pre) %>%
     dplyr::mutate(post = NULL, symptom_postwords = post) %>%
     dplyr::mutate(docname = NULL, doc_id = docname)
   
   
-  
+  #res <- res %>% filter(pos == "NOUN")
   # variante 1 mit amatch (lookup) (levenstein distance)
-  v <- stringdist::amatch(t1$lemma, drug_table$drugname, maxDist = 1)
+  v <- stringdist::amatch(res$lemma, drug_table$drugname, maxDist = 1)
   # extrahieren der indexe welche einen konkreten wert beinhalten
-  t1$drugName <- v
-  t1$drugName[which(!is.na(v))] <- t1$token[which(!is.na(v),)]
+  res$drugname <- v
+  res$drugname[which(!is.na(v))] <- paste0("[",res$lemma[which(!is.na(v))],"]")
   # maskieren aller medikamente
-  t1$drugName[which(is.na(v))] <- ""
+  res$drugname[which(is.na(v))] <- ""
+  
+  res <- res %>% filter(pos %in% c("VERB", "NOUN", "ADJ")) %>%
+   dplyr::inner_join(ann_symptomes, by = "doc_id") #%>%
+   #dplyr::filter(!doc_id %in% filtered_doc_ids$doc_id)
+    
   
   
-  
-  
-  res <- t1 %>% filter(
-    is_alpha == TRUE,
-    like_num == FALSE,
-    like_email == FALSE,
-    like_url == FALSE,
-    is_digit == FALSE,
-    is_stop == FALSE
-  )
-  
-  res <- res %>% filter(pos %in% c("VERB", "NOUN", "ADJ"))
-  res <- res %>% dplyr::inner_join(ann_symptomes, by = "doc_id")
   return (res)
 }
 
@@ -443,10 +350,10 @@ GetSynonymesFromWordNet <- function(symptomes)
 {
   setDict("C:/Program Files (x86)/WordNet/2.1/dict")
   result <- NULL
-  for (i in symptomes)
+  for (i in c(symptomes))
   {
-    tryCatch({
-      x <- synonyms(i, "NOUN")
+    
+      x <- c(synonyms(i, "NOUN"),synonyms(i, "VERB"))
       if (length(x) > 0)
       {
         print(paste("print", x, sep = " "))
@@ -467,10 +374,7 @@ GetSynonymesFromWordNet <- function(symptomes)
           ))
         
       }
-    },
-    error = function(err) {
-      next
-    })
+    
   }
   
   return(result)
