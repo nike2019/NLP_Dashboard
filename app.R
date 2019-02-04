@@ -24,6 +24,7 @@ library(rtweet)
 library(tidytext)
 library(utf8)
 library(wordcloud)
+library(xlsx)
 
 ####################
 # Helper functions
@@ -41,6 +42,9 @@ ui <- dashboardPage(
     tags$hr(),
     
     actionButton("do", "connect to mongodb"),
+    tags$hr(),
+    
+    actionButton("saveXLS", "save to xlsx"),
     
     fileInput(
       "file1",
@@ -136,8 +140,9 @@ ui <- dashboardPage(
           "wordcloud_freq",
           "word occurence",
           min = 1,
-          max = 100,
-          value = 2
+          max = 10,
+          value = 2,
+          step = 1
         ),
         plotOutput("wordcloud" , width = "100%")
         
@@ -170,7 +175,7 @@ server <- function(input, output) {
     req(input$file1)
     print("file")
     rt <- parse_stream(input$file1$datapath)
-    rt <- rt %>% dplyr::filter(lang == "en")
+    
   })
   
   rs_r <- reactive({
@@ -186,6 +191,15 @@ server <- function(input, output) {
       rt <- file_r()
     }
     
+    rt <- data.frame(rt)
+    rt <- rt %>% dplyr::filter(lang == "en") %>%
+    mutate(text = iconv(text)) %>%  
+    dplyr::filter(is_retweet == FALSE)
+    
+    
+    #tweets.df$text = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", tweets.df$text)
+    
+    
   })
   
     
@@ -194,11 +208,13 @@ server <- function(input, output) {
     #req(input$file3)
     drugfile <-
       ifelse(is.null(input$file3$datapath), " ", input$file3$datapath)
-    fread(
+    res <- fread(
       file = ifelse(file.exists(drugfile), drugfile, "daten/drugnames.csv"),
       sep = ",",
-      header = TRUE
+      header = FALSE
     )
+    
+    data.table(drugname = res)
     
   })
   
@@ -206,11 +222,13 @@ server <- function(input, output) {
     #req(input$file2)
     symptomfile <-
       ifelse(is.null(input$file2$datapath), " ", input$file2$datapath)
-    fread(
+    res <- fread(
       file = ifelse(file.exists(symptomfile), symptomfile, "daten/adrs.csv"),
       sep = ",",
-      header = TRUE
+      header = FALSE
     )
+    
+    data.table(symptome = res)
     
   })
   
@@ -239,16 +257,16 @@ server <- function(input, output) {
     library(dplyr)
     if (input$symptomes == TRUE)
     {
-      tbl_symptomes <- GetsymptomesFromWordNet(tbl_symptomes$symptome)
+      tbl_symptomes <- GetSynonymesFromWordNet(tbl_symptomes$symptome)
     }
     
-    tbl_symptomes$synonymes <-
-      unlist(tbl_symptomes$synonymes,
-             recursive = TRUE,
-             use.names = TRUE)
+    # tbl_symptomes$symptome <-
+    #   unlist(tbl_symptomes$symptome,
+    #          recursive = TRUE,
+    #          use.names = TRUE)
     tbl_symptomes$unique_synonymes <-
-      tbl_symptomes %>% dplyr::distinct(synonymes) %>% dplyr::pull()
-    write.table(tbl_symptomes$unique_synonymes, file = "collected_symptomes.csv")
+      tbl_symptomes %>% dplyr::distinct(symptome) %>% dplyr::pull()
+    write.table(tbl_symptomes, file = "collected_symptomes.csv",sep = ",", quote = FALSE, row.names = FALSE)
     
     
     if ('extended_tweet.full_text' %in% names(rt))
@@ -280,7 +298,7 @@ server <- function(input, output) {
     
     
     outcome <-
-      TagDrugAndsymptomes(rt$text, tbl_symptomes, tbl_drug[1:100], tbl_slangterms)
+      TagDrugAndsymptomes(rt$text, tbl_symptomes, tbl_drug[1:1000], tbl_slangterms)
     #outcome$advertising_ratio <- s
     
     
@@ -373,6 +391,15 @@ server <- function(input, output) {
     print("EVent Button clicked")
   })  
   
+  observeEvent(input$saveXLS, {
+    file <- paste(tempdir(), "/export.xlsx", sep="")
+    res <- write.xlsx(aggr_data_text_r(), file)  
+    print(paste("save to xlsx file to: ",file,sep = ""))
+  })  
+  
+  
+  
+  
   output$trace_table <-
     DT::renderDataTable(
       data.table(
@@ -409,7 +436,7 @@ server <- function(input, output) {
       sd <-
         stringdist::stringdistmatrix(
           as.character(tokens(c$text)),
-          as.character(tbl_sym$synonyme),
+          as.character(tbl_sym$symptome),
           useNames = "strings",
           method = "lv",
           weight = c(
@@ -421,14 +448,17 @@ server <- function(input, output) {
         )
       sdm <- as.matrix(sd)
       
+      
+      
+      
       sdm <- sdm[sdm[, 1] < 6,]
       if (is.matrix(sdm))
       {
         sdm <- sdm[, sdm[1, ] < 6]
         sdm <- sdm[order(sdm[, 1], decreasing = TRUE), , drop = FALSE]
-        
+
       }
-      
+
       
       
       Colors = brewer.pal(11, "Spectral")
@@ -456,7 +486,7 @@ server <- function(input, output) {
       print(c$text)
       
       wl <-
-        GetSimilarWords(as.character(tokens(c$text)), tbl_sym$synonyme)
+        GetSimilarWords(as.character(tokens(c$text)), tbl_sym$symptome)
       if (is.data.frame(wl))
       {
         print(paste("get data from wordlist", wl, sep = ":"))
@@ -473,15 +503,15 @@ server <- function(input, output) {
   
   
   output$aggr_table <- renderDataTable({
-      return(datatable(aggr_data_r()) %>% 
-               formatStyle(
-                 'count',
-                 background = styleColorBar(aggr_data_r()$count, 'orange'),
-                 backgroundSize = '100% 90%',
-                 backgroundRepeat = 'no-repeat',
-                 backgroundPosition = 'center'
-               )
-      )
+    return(datatable(aggr_data_r()) %>% 
+             formatStyle(
+               'count',
+               background = styleColorBar(aggr_data_r()$count, 'orange'),
+               backgroundSize = '100% 90%',
+               backgroundRepeat = 'no-repeat',
+               backgroundPosition = 'center'
+             )
+    )
     })
     
     
