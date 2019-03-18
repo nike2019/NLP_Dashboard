@@ -6,6 +6,8 @@ library(textclean)
 library(tm)
 library(data.table)
 library(syuzhet)
+library(bit64)
+library(lubridate)
 
 
 resolveEmotions <- function(text)
@@ -29,17 +31,20 @@ resolveInternetSlang <- function(text)
     replacement = lexicon::hash_internet_slang[[2]]
   )
   
-  print(result)
+  result <- replace_non_ascii(result)
+  result <- replace_html(result)
+  result <- replace_emoticon(result)
   return (result)
   
 }
 
 connectMongoDB <- function(collectionName,dbName)
 {
-  my_collection = mongo(collection = collectionName, db = dbName) # create connection, database and collectio
+  # create connection, database and collectio
+  my_collection = mongo(collection = collectionName, db = dbName) 
   return (my_collection)
 }
-# Prozeduren welche für die Wortänlichkeit gebraucht werden
+# Prozeduren welche fÃ¼r die WortÃ¤nlichkeit gebraucht werden
 #
 #
 
@@ -72,7 +77,7 @@ GetSimilarWords <- function(tok, sympt)
     if (length(sd) > 0)
     {
       
-      print(paste("add data to dataframe", sd, sep = ":"))
+      
       df[, ncol(df) + 1] <- c(c(names(sd)), c(rep(NA, max.len - l)))
       names(df)[ncol(df)] <- i
     }
@@ -98,23 +103,102 @@ resolveKeyWords <- function(keywords, tokens)
   
 }
 
-CorpusPreProcessing <- function(text)
+CorpusPreProcessing <- function(text, is_preprocessing = TRUE)
 {
   library(utf8)
   library(SnowballC)
   
   corpus <- Corpus(VectorSource(as.vector(text)))
-  corpus <- tm_map(corpus, content_transformer(tolower))
-  corpus <- tm_map(corpus, removeNumbers)
-  corpus <- tm_map(corpus, removePunctuation)
-  corpus <- tm_map(corpus, removeWords, stopwords("english"))
-  corpus <- tm_map(corpus, stemDocument)
+  if (is_preprocessing)
+  {
+    corpus <- tm_map(corpus, content_transformer(tolower))
+    tm::inspect(corpus[[1]])
+    corpus <- tm_map(corpus, removeNumbers)
+    tm::inspect(corpus[[1]])
+    
+    
+    #corpus <- tm_map(corpus, stemDocument)
+    tm::inspect(corpus[[1]])
+    corpus <-
+      tm_map(corpus, content_transformer(function(x) {
+        stringr::str_replace_all(x, "\n", " ")
+      }))
+    
+    corpus <-
+      tm_map(corpus, content_transformer(function(x) {
+        stringr::str_replace_all(x, "(f|ht)(tp)(s?)(://)(.*)[.|/](.*)", " ")
+      }))
+    corpus <-
+      tm_map(corpus, content_transformer(function(x) {
+        stringr::str_replace_all(x, "\\brt\\b\\s*\\@", " ")
+      }))
+    corpus <-
+      tm_map(corpus, content_transformer(function(x) {
+        stringr::str_replace_all(x, "[.,?,/]", " ")
+      }))
+    corpus <- tm_map(corpus, removePunctuation)
+    corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  }
   corp <- corpus(corpus)
   dt <- data.table(doc_id = docnames(corp), text = texts(corp))
   
   return(dt)
   
 }
+
+
+
+GetTopNSymptomes <- function(data,n)
+{
+  
+  l <- data %>% 
+    dplyr::select(symptomes) %>%
+    dplyr::group_by(symptomes) %>% 
+    dplyr::summarise(count = dplyr::n()) %>% 
+    dplyr::arrange(desc(count)) %>%
+    dplyr::top_n(n)
+  
+  return (l)
+}
+
+GetTopNDrugs <- function(data,n)
+{
+  
+  l <- data %>% 
+    dplyr::select(drugs) %>%
+    dplyr::group_by(drugs) %>% 
+    dplyr::summarise(count = dplyr::n()) %>% 
+    dplyr::arrange(desc(count)) %>%
+    dplyr::top_n(n)
+  
+  return (l)
+}
+
+
+GetTopSymptomes <- function(data)
+{
+  
+  l <- data %>% 
+    dplyr::group_by(symptomes) %>% 
+    dplyr::summarise(count = dplyr::n()) %>% 
+    dplyr::arrange(desc(count)) %>%
+    dplyr::top_n(50)
+  
+  return (l)
+}
+
+
+GetTimeLineForDrugs <- function(data,n)
+{
+  
+  l <- data %>% 
+    dplyr::mutate(time_in_days = days(created_at)) %>%
+    dplyr::group_by(time_in_days) %>% 
+    dplyr::summarise(count = dplyr::n()) 
+    
+  return (l)
+}
+
 
 
 AggregateDrugsAndsymptomes <- function(data)
@@ -143,19 +227,25 @@ AggregateDrugsAndsymptomes <- function(data)
 
 AggregateDrugsAndsymptomesWithText <- function(text, data)
 {
-  corp <- quanteda::corpus(text)
+  corp <- quanteda::corpus(text$text)
   
   dt <- data.table(doc_id = docnames(corp), text = texts(corp))
+  dt$text_without_icons <- text$text_without_icons
+  dt$text_without_slang <- text$text_without_slang
   
   dt$has_url <- str_detect(dt$text, "(f|ht)(tp)(s?)(://)(.*)[.|/](.*)")
   
+  dt$is_retweet <- stringi::stri_detect_regex(dt$text, "\\brt\\b\\s*\\@", case_insensitive = TRUE)
+  # todo date time for time
+  #as.POSIXct("Sat Jan 05 14:05:52 +0000 2019", format="%a %b %d %H:%M:%S +0000 %Y", tz="GMT")
   
+  
+  print(text$text_without_slang)
   
   data <-
     data %>% dplyr::select(doc_id,
+                           tweetid,
                            drugname,
-                           symptom_prewords,
-                           symptom_postwords,
                            symptome,
                            lemma) %>% dplyr::distinct() %>%
     dplyr::inner_join(dt, by = "doc_id")
@@ -164,7 +254,7 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
   
   
   master_data <-
-    data %>% dplyr::select(symptome, drugname, text, doc_id, lemma,has_url)
+    data %>% dplyr::select(symptome, drugname, text,text_without_icons,text_without_slang, doc_id, lemma,has_url,is_retweet,tweetid)
   
   
   #gruppieren der daten medikamente, symptome
@@ -188,12 +278,80 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
       
     )
   
-  # zusammenführen mit text
-  master_data <- master_data %>% distinct(doc_id, text,has_url)
+  # zusammenfÃ¼hren mit text
+  master_data <- master_data %>% distinct(tweetid,doc_id, text,has_url,is_retweet,text_without_slang,text_without_icons)
   data <- data %>% dplyr::inner_join(master_data, by = "doc_id")
   data <-
     data %>% dplyr::filter((data$symptomes != "") & (data$drugs != ""))
-  print(paste("debug 3: ",dt$doc_id,sep = " "))
+  
+  return(data)
+  
+  
+  
+}
+
+AggregateDrugsAndsymptomesWithTextAndContextWords <- function(text, data)
+{
+  corp <- quanteda::corpus(text$text)
+  
+  dt <- data.table(doc_id = docnames(corp), text = texts(corp))
+  dt$text_without_icons <- text$text_without_icons
+  dt$text_without_slang <- text$text_without_slang
+  
+  dt$has_url <- str_detect(dt$text, "(f|ht)(tp)(s?)(://)(.*)[.|/](.*)")
+  
+  dt$is_retweet <- stringi::stri_detect_regex(dt$text, "\\brt\\b\\s*\\@", case_insensitive = TRUE)
+  # todo date time for time
+  #as.POSIXct("Sat Jan 05 14:05:52 +0000 2019", format="%a %b %d %H:%M:%S +0000 %Y", tz="GMT")
+  
+  
+  print(text$text_without_slang)
+  
+  data <-
+    data %>% dplyr::select(doc_id,
+                           tweetid,
+                           created_at,
+                           drugname,
+                           symptom_prewords,
+                           symptom_postwords,
+                           symptome,
+                           lemma) %>% dplyr::distinct() %>%
+    dplyr::inner_join(dt, by = "doc_id")
+  
+  
+  
+  
+  master_data <-
+    data %>% dplyr::select(symptome, drugname, text,text_without_icons,text_without_slang, doc_id, lemma,has_url,is_retweet,tweetid,created_at,symptom_prewords,symptom_postwords)
+  
+  
+  #gruppieren der daten medikamente, symptome
+  data <- master_data %>%
+    dplyr::group_by(doc_id) %>%
+    dplyr::summarise(
+      drugs =
+        paste(
+          data.frame(drugname) %>% dplyr::distinct(drugname) %>% dplyr::pull(),
+          collapse = ""
+        ),
+      symptomes =
+        paste(
+          data.frame(symptome) %>% dplyr::distinct(symptome) %>% dplyr::pull(),
+          collapse = ""
+        ),
+      tokens = paste(
+        data.frame(lemma) %>% dplyr::distinct(lemma) %>% dplyr::pull(),
+        collapse = " "
+      ),
+      
+    )
+  
+  # zusammenfÃ¼hren mit text
+  master_data <- master_data %>% distinct(tweetid,created_at,doc_id, text,has_url,is_retweet,text_without_slang,text_without_icons,symptom_prewords,symptom_postwords)
+  data <- data %>% dplyr::inner_join(master_data, by = "doc_id")
+  data <-
+    data %>% dplyr::filter((data$symptomes != "") & (data$drugs != ""))
+  
   return(data)
   
   
@@ -201,19 +359,65 @@ AggregateDrugsAndsymptomesWithText <- function(text, data)
 }
 
 
+ExportFile <- function(data,isCSV)
+{
+  
+  
+  tf <- data %>% dplyr::select(text_without_slang,text_without_icons,text,symptomes,drugs,has_url,is_retweet,tweetid,created_at,symptom_prewords,symptom_postwords) %>% 
+    #dplyr::filter(has_url == FALSE & is_retweet == FALSE) %>%
+    dplyr::mutate(tweetid_int = bit64::as.integer64(tweetid)) %>%
+    dplyr::mutate(symptomes = c(gsub("\\[|\\]", "", gsub("\\]\\[", ",", symptomes)))) %>%
+    dplyr::mutate(drugs = gsub("\\[|\\]", "", gsub("\\]\\[", ",", drugs))) %>%
+    dplyr::mutate(symptom_counts = sapply(strsplit(symptomes,","), length)) %>%
+    dplyr::mutate(drug_counts = sapply(strsplit(drugs,","), length)) %>%
+    dplyr::mutate(strlen =  sapply(text, nchar))
+  
+  
+  
+  if(isCSV)
+  {
+    
+    res <- fwrite(tf,filename)
+    
+  }
+  else
+  {
+    file <- paste(tempdir(), "/export.xlsx", sep="")
+    res <- write.xlsx(tf, file)    
+    df <- read.xlsx(file,1)
+    file_csv <- paste(tempdir(), "/export.csv", sep="")
+    res <- fwrite(df,file_csv)
+    
+  }
+  
+  return (file)
+  
+}
 
+format.twitter.date <- function(datestring){
+  Sys.setlocale("LC_TIME", "US")
+  datestring <- as.POSIXct(datestring, format="%a %b %d %H:%M:%S +0000 %Y", tz="GMT")
+  return(datestring)
+}
 
-
-
-TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
+TagDrugAndsymptomes <- function(rt, adrs, drugnames, slangterms,is_context_words = TRUE)
 {
   spacy_initialize()
   result = NULL
-  text <- tolower(text)
+  text <- tolower(rt$text)
+  
+  df <- data.frame(tweetid = rt$id)
+  
+  
+  df$created_at <- format.twitter.date(rt$created_at)
+  print(df$created_at)
   
   corp <- quanteda::corpus(text)
+  df$doc_id <- docnames(corp)
+  df$text <- texts(corp)
+   
   
-  dt <- data.table(doc_id = docnames(corp), text = texts(corp))
+  
   
   drug_table <-
     data.table(drugname = c(sapply(drugnames$drugname, function(x)
@@ -228,10 +432,8 @@ TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
         tolower(x)))) %>% dplyr::distinct()
   
   
-  
-  
   res <- spacy_parse(
-    dt$text,
+    df$text,
     pos = TRUE,
     dependency = TRUE,
     lemma = TRUE,
@@ -260,43 +462,59 @@ TagDrugAndsymptomes <- function(text, adrs, drugnames, slangterms)
   
   
   
-  filtered_doc_ids <- res %>% filter(
-    like_email == TRUE &
-    like_url == TRUE
-    
-  ) %>% select(doc_id) %>% distinct()
   
-  
-  
-  
-  ann_symptomes <-
+  text_cleaned <- CorpusPreProcessing(df$text)
+  text_cleaned <- Corpus(VectorSource(as.vector(text_cleaned$text)))
+  corp <- corpus(text_cleaned)
+  kwic_text <- texts(corp)
+  print(symptome_table$symptome)
+  print(kwic_text)
+  if(is_context_words)
+  {
+  ann_symptomes <- 
     kwic(
-      dt$text,
+      kwic_text,
       phrase(symptome_table$symptome),
       valuetype = "glob",
       case_insensitive = TRUE
     ) %>%
     dplyr::select(docname, pre, post, keyword) %>%
-    dplyr::mutate(keyword = NULL, symptome = paste0("[", keyword , "]")) %>%
-    dplyr::mutate(pre = NULL, symptom_prewords = pre) %>%
-    dplyr::mutate(post = NULL, symptom_postwords = post) %>%
-    dplyr::mutate(docname = NULL, doc_id = docname)
+    dplyr::mutate(symptome = paste0("[", keyword , "]")) %>%
+    dplyr::mutate(symptom_prewords = pre) %>%
+    dplyr::mutate(symptom_postwords = post) %>%
+    dplyr::mutate(doc_id = docname)
+  }
+  else
+  {
+    ann_symptomes <- 
+      kwic(
+        df$text,
+        phrase(symptome_table$symptome),
+        valuetype = "glob",
+        case_insensitive = TRUE
+      ) %>%
+      dplyr::select(docname, keyword) %>%
+      dplyr::mutate(symptome = paste0("[", keyword , "]")) %>%
+      dplyr::mutate(doc_id = docname)
+    
+  }
   
   
   #res <- res %>% filter(pos == "NOUN")
   # variante 1 mit amatch (lookup) (levenstein distance)
-  v <- stringdist::amatch(res$lemma, drug_table$drugname, maxDist = 1)
+  v <- match(res$lemma, drug_table$drugname)
   # extrahieren der indexe welche einen konkreten wert beinhalten
+  
   res$drugname <- v
   res$drugname[which(!is.na(v))] <- paste0("[",res$lemma[which(!is.na(v))],"]")
   # maskieren aller medikamente
   res$drugname[which(is.na(v))] <- ""
   
   res <- res %>% filter(pos %in% c("VERB", "NOUN", "ADJ")) %>%
-   dplyr::inner_join(ann_symptomes, by = "doc_id") #%>%
-   #dplyr::filter(!doc_id %in% filtered_doc_ids$doc_id)
+   dplyr::inner_join(ann_symptomes, by = "doc_id") %>%
+    dplyr::inner_join(df, by = "doc_id")
     
-  
+   
   
   return (res)
 }
