@@ -33,6 +33,7 @@ library(jsonlite)
 library(httr)
 library(ggplot2)
 library(gplots)
+library(reshape2)
 source("Helpers.R")
 
 ui <- dashboardPage(
@@ -41,14 +42,14 @@ ui <- dashboardPage(
     # Input: Select a file ----
     tags$hr(),
     
-    actionButton("do", "connect to mongodb"),
+    actionButton("do", "verbinden mit mongodb"),
     tags$hr(),
     
-    actionButton("saveXLS", "save to xlsx"),
+    actionButton("saveXLS", "speichern als xlsx"),
     
     fileInput(
       "file1",
-      "Choose twitter json File",
+      "wÃ¤hle twitter json File",
       multiple = TRUE,
       accept = c("json/json",
                  "json/json files",
@@ -58,7 +59,7 @@ ui <- dashboardPage(
     
     fileInput(
       "file2",
-      "Choose symptome file",
+      "wÃ¤hle symptome file",
       multiple = TRUE,
       accept = c("text/csv",
                  "text/comma-separated-values,text/plain",
@@ -67,7 +68,7 @@ ui <- dashboardPage(
     
     fileInput(
       "file3",
-      "Choose drug file",
+      "wÃ¤hle Medikamenten file",
       multiple = TRUE,
       accept = c("text/csv",
                  "text/comma-separated-values,text/plain",
@@ -81,7 +82,7 @@ ui <- dashboardPage(
     tags$hr(),
     
     
-    checkboxInput("symptomes", "generate symptomes", value = FALSE),
+    checkboxInput("symptomes", "generierung von symptomen aus wordnet", value = FALSE),
     
     
     # Input: Select number of rows to display ----
@@ -105,7 +106,7 @@ ui <- dashboardPage(
                  column(
                    6,
                    box(
-                     title = "messages and found drugs / symptomes",
+                     title = "Tweets gefunden mit Symptomen u. Medikamenten",
                      status = "primary",
                      height =
                        "750",
@@ -121,35 +122,50 @@ ui <- dashboardPage(
                  column(6, plotOutput("heatmap")),
                  column(6, tableOutput("wordlist"))
                )),
+      
       tabPanel(
-        "Frequent used words",
-        sliderInput(
-          "wordOCc",
-          "word occurence",
-          min = 1,
-          max = 100,
-          value = 2
-        ),
-        plotOutput("wordplot" , width = "100%")
+        "Medikamente / Symptome Zusammenfassung",
+        plotOutput("drugsPlot" , width = "100%"),
+        plotOutput("symptomePlot" , width = "100%")
         
         
       ),
       tabPanel(
-        "Inverse Document Trm Frequency",
-        sliderInput(
-          "wordcloud_freq",
-          "word occurence",
-          min = 1,
-          max = 10,
-          value = 2,
-          step = 1
-        ),
-        plotOutput("wordcloud" , width = "100%")
+        "Zeitliche Verlauf, Symptome, Medikamente",
+        plotOutput("drugsTimePlot" , width = "100%"),
+        plotOutput("symptomeTimePlot" , width = "100%")
         
         
       ),
+      # tabPanel(
+      #   "Frequent used words",
+      #   sliderInput(
+      #     "wordOCc",
+      #     "word occurence",
+      #     min = 1,
+      #     max = 100,
+      #     value = 2
+      #   ),
+      #   plotOutput("wordplot" , width = "100%")
+      #   
+      #   
+      # ),
+      # tabPanel(
+      #   "Inverse Document Term Frequency",
+      #   sliderInput(
+      #     "wordcloud_freq",
+      #     "word occurence",
+      #     min = 1,
+      #     max = 10,
+      #     value = 2,
+      #     step = 1
+      #   ),
+      #   plotOutput("wordcloud" , width = "100%")
+      #   
+        
+      #),
       tabPanel(
-        "Drug / symptom frequency",
+        "Medikament / Symptom HÃ¤ufigkeit",
         DT::dataTableOutput("aggr_table"),
         style = "height:630px; overflow-y: scroll;"
       )
@@ -163,11 +179,15 @@ options(shiny.maxRequestSize = 30 * 1024 ^ 3)
 server <- function(input, output) {
   
   isDBConnect <- reactiveVal(FALSE)
+  isContext <- reactiveVal(TRUE)
   
   mongo_r <- reactive({
     print("mongodb")
     collection <- connectMongoDB("twitter","twitterdb")
     rt <- collection$find()
+    
+    
+    
   })
   
   
@@ -192,13 +212,12 @@ server <- function(input, output) {
     }
     
     rt <- data.frame(rt)
-    rt <- rt %>% dplyr::filter(lang == "en") %>%
-    mutate(text = iconv(text)) %>%  
-    dplyr::filter(is_retweet == FALSE)
-    
-    
-    #tweets.df$text = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", tweets.df$text)
-    
+    rt <- rt %>% select(text,lang,created_at,id_str) %>% dplyr::filter(lang == "en") %>%
+      mutate(text_without_icons = iconv(text),
+             text_without_slang = resolveInternetSlang(text)
+             
+             ) 
+      
     
   })
   
@@ -232,8 +251,30 @@ server <- function(input, output) {
     
   })
   
+  TopNSymptomes_r <- reactive({
+    
+    df <- aggr_data_text_r()
+    l <- GetTopNSymptomes(df,40)
+    return (l)
+    
+  })
+  
+  TopNDrugs_r <- reactive({
+    
+    df <- aggr_data_text_r()
+    l <- GetTopNDrugs(df,40)
+    return (l)
+    
+  })
   
   
+  TimelineForDrugs_r <- reactive({
+    
+    df <- ps()
+    l <- GetTimeLineForDrugs(df,40)
+    return (l)
+    
+  })
   
   
   ps <- reactive({
@@ -241,7 +282,7 @@ server <- function(input, output) {
     rt <- rs_r()
     
     
-    rt$text <- resolveInternetSlang(rt$text)
+    
     
     tbl_drug <- drug_r()
     tbl_symptomes <- symptom_r()
@@ -264,41 +305,18 @@ server <- function(input, output) {
     #   unlist(tbl_symptomes$symptome,
     #          recursive = TRUE,
     #          use.names = TRUE)
-    tbl_symptomes$unique_synonymes <-
-      tbl_symptomes %>% dplyr::distinct(symptome) %>% dplyr::pull()
-    write.table(tbl_symptomes, file = "collected_symptomes.csv",sep = ",", quote = FALSE, row.names = FALSE)
-    
-    
-    if ('extended_tweet.full_text' %in% names(rt))
-    {
-      print('attribute extended_tweet.full_text exists')
-      
-    }
-    else
-    {
-      print('attribute text exists')
-    }
-    
+    print("Test 100")
+    # tbl_symptomes$unique_synonymes <- tbl_symptomes %>% dplyr::distinct(symptome) %>% dplyr::pull()
+    # write.table(tbl_symptomes, file = "collected_symptomes.csv",sep = ",", quote = FALSE, row.names = FALSE)
+    # print("test 101")
     
     
     ################################
     # find ratio between advertise
     ################################
     
-    rt$isAdvertise <-
-      str_detect(rt$text, "(f|ht)(tp)(s?)(://)(.*)[.|/](.*)")
-    s <-
-      rt %>% dplyr::group_by(isAdvertise) %>% dplyr::count(isAdvertise)
     
-    
-    
-    # remove advertising
-    noadvertise <-
-      rt %>% dplyr::select(isAdvertise, text) %>% dplyr::filter(isAdvertise == FALSE)
-    
-    
-    outcome <-
-      TagDrugAndsymptomes(rt$text, tbl_symptomes, tbl_drug[1:1000], tbl_slangterms)
+    outcome <- TagDrugAndsymptomes(rt, tbl_symptomes, tbl_drug[1:1000], tbl_slangterms,isTruthy(isContext()))
     #outcome$advertising_ratio <- s
     
     
@@ -306,19 +324,36 @@ server <- function(input, output) {
   
   
   
-  ################################
-  # find ratio between advertise
-  ################################
+  #######################################################
+  # find aggregated drugs and symptomes with twitter text
+  #######################################################
   aggr_data_text_r <- reactive({
     rt <- rs_r()
-    rt$text <- resolveInternetSlang(rt$text)
+    #rt$text <- resolveInternetSlang(rt$text)
+    newValue <- TRUE     # newValue <- rv$value - 1
+    isContext(newValue) 
+    
     df <- ps()
-    outcome <- AggregateDrugsAndsymptomesWithText(rt$text, df)
+    outcome <- AggregateDrugsAndsymptomesWithText(rt, df)
     
   })
   
+  
+  #######################################################
+  # find aggregated drugs and symptomes with twitter text
+  # with additional context words
+  #######################################################
+  aggr_data_text_and_context_r <- reactive({
+    rt <- rs_r()
+    #rt$text <- resolveInternetSlang(rt$text)
+    
+    df <- ps()
+    
+    outcome <- AggregateDrugsAndsymptomesWithTextAndContextWords(rt, df)
+    
+  })
   ################################
-  # find ratio between advertise
+  # aggregate drugs and symtomes
   ################################
   aggr_data_r <- reactive({
     df <- ps()
@@ -327,7 +362,7 @@ server <- function(input, output) {
   })
   
   ################################
-  # find ratio between advertise
+  # Text processing (cleaning)
   ################################
   corp_preprocessing_r <- reactive({
     rt <- ps()
@@ -338,16 +373,11 @@ server <- function(input, output) {
   
     
     
-  ################################
-  # find ratio between advertise
-  ################################
+  ##################################################
+  # term frequency inverse document frequency matrix
+  ##################################################
   tfidf_matrix_r <- reactive({
     corpus <- corp_preprocessing_r()
-    
-    
-    #dtm <- DocumentTermMatrix(Corpus(VectorSource(as.vector(corpus))))
-    #tf <- sort(colSums(as.matrix(dtm)), decreasing=TRUE)
-    
     
     dtm <-
       DocumentTermMatrix(Corpus(VectorSource(as.vector(corpus))), control = list(weighting = weightTfIdf))
@@ -359,7 +389,7 @@ server <- function(input, output) {
   
   
   ################################
-  # find ratio between advertise 
+  # document term matrix
   ################################
   dtm_matrix_r <-  reactive({
     corpus <- corp_preprocessing_r()
@@ -378,22 +408,16 @@ server <- function(input, output) {
       res   <- data.frame(list(tf = tf, word = names(tf)))
       
     }
-    
-    
-    
   })
     
-    
-     
   observeEvent(input$do, {
     newValue <- TRUE     # newValue <- rv$value - 1
     isDBConnect(newValue) 
-    print("EVent Button clicked")
+    print("Get data from mongodb")
   })  
   
   observeEvent(input$saveXLS, {
-    file <- paste(tempdir(), "/export.xlsx", sep="")
-    res <- write.xlsx(aggr_data_text_r(), file)  
+    file <- ExportFile(aggr_data_text_and_context_r(),FALSE)
     print(paste("save to xlsx file to: ",file,sep = ""))
   })  
   
@@ -412,65 +436,44 @@ server <- function(input, output) {
       selection = "single"
     )
   
-  # input$file1 will be NULL initially. After the user selects
-  # and uploads a file, head of that data file by default,
-  # or all rows if selected, will be shown.
-  
-  
-  
-  
   library(RColorBrewer)
   
   # client-side processing
   output$heatmap = renderPlot({
-    s = input$trace_table_rows_selected
-    if (length(s)) {
+    idx = input$trace_table_rows_selected
+    if (length(idx)) {
       tbl_sym <- symptom_r()
-      txt <- aggr_data_text_r()$tokens[s]
+      txt <- aggr_data_text_r()$text[idx]
+      c <- CorpusPreProcessing(txt,is_preprocessing = FALSE)
+      token <- tokens(c$text)
+      token <- as.vector(unlist(token))
+      
+      x <- adist(tbl_sym$symptome,counts = TRUE,token)
+      colnames(x) <- token
+      rownames(x) <- tbl_sym$symptome
       
       
-      print(txt)
+      melted_cormat <- melt(x)
       
       
-      c <- CorpusPreProcessing(txt)
-      sd <-
-        stringdist::stringdistmatrix(
-          as.character(tokens(c$text)),
-          as.character(tbl_sym$symptome),
-          useNames = "strings",
-          method = "lv",
-          weight = c(
-            d = 1,
-            i = 1,
-            s = 1,
-            t = 1
-          )
-        )
-      sdm <- as.matrix(sd)
+      df <- data.frame(melted_cormat)
       
+      df <- df %>% mutate(dist = round(nchar(as.character(Var1))/5), tweet = Var2, symptomes = Var1)
       
+      df <- df %>% distinct(tweet,symptomes,dist,value) %>% filter(value <= dist + 1) %>% top_n(20)
       
-      
-      sdm <- sdm[sdm[, 1] < 6,]
-      if (is.matrix(sdm))
-      {
-        sdm <- sdm[, sdm[1, ] < 6]
-        sdm <- sdm[order(sdm[, 1], decreasing = TRUE), , drop = FALSE]
-
-      }
-
-      
-      
-      Colors = brewer.pal(11, "Spectral")
-      heatmap(
-        sdm,
-        col = Colors,
-        density.info = "none",
-        Colv = NA,
-        Rowv = NA,
-        trace = "none"
-      )
-      
+      ggplot(data = df, aes(x = symptomes, y = tweet, fill = value)) + 
+        geom_tile(aes(fill = value), size = 1) + 
+        scale_fill_gradient(low = "white", high = "steelblue") + 
+        theme_grey(base_size = 12) + 
+        scale_x_discrete(expand = c(0, 0)) + 
+        scale_y_discrete(expand = c(0, 0)) +
+        theme(axis.ticks = element_blank(), 
+              #panel.background = element_blank(), 
+              plot.title = element_text(size = 12, colour = "gray50")) + 
+        coord_equal() + 
+        labs(x = "tweet",y = "symptome") + 
+        geom_text(aes(label=value), size=4)
       
     }
   })
@@ -513,7 +516,44 @@ server <- function(input, output) {
              )
     )
     })
+  output$symptomePlot <- renderPlot({
     
+    
+    topNSymtptomes <- TopNSymptomes_r()
+    
+    return(ggplot(data=topNSymtptomes, aes(x = reorder(symptomes, -count), y=count, fill = symptomes)) +
+             theme(legend.position = "none") +
+             geom_bar(stat="identity") +
+             labs(x = "Symptom",y = "Anzahl Treffer") + 
+             coord_flip()
+    
+    )
+  })
+  output$drugsPlot <- renderPlot({
+    
+    
+    topNDrugs <- TopNDrugs_r()
+    
+    return(ggplot(data=topNDrugs, aes(x = reorder(drugs, -count), y=count, fill = drugs)) +
+             theme(legend.position = "none") +
+             geom_bar(stat="identity") +
+             labs(x = "Medikament",y = "Anzahl Treffer") + 
+             coord_flip()
+           
+    )
+  })
+  output$drugsTimePlot <- renderPlot({
+    
+    timeline <- TimelineForDrugs_r()
+    
+    
+    return(ggplot(timeline, aes(time_in_days, count)) + geom_line() +
+             xlab("") + ylab("Daily Views")
+           
+    )
+  })
+  
+  
     
     
     output$wordplot <- renderPlot({
